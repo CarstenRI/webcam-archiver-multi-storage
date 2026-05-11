@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% block title %}Webcams – Webcam-Uploader
+<script id="cam-dnd-script">
+(function() {
+  var tbody = document.getElementById('cam-tbody');
+  if (!tbody) return;
+  var dragRow = null;
+
+  function clearOver() {
+    Array.prototype.forEach.call(tbody.querySelectorAll('.drag-over-top, .drag-over-bottom'),
+      function(el){ el.classList.remove('drag-over-top'); el.classList.remove('drag-over-bottom'); });
+  }
+
+  tbody.addEventListener('dragstart', function(e) {
+    var row = e.target.closest('tr.cam-row');
+    if (!row) return;
+    dragRow = row;
+    row.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', row.dataset.camId); } catch(_){}
+  });
+
+  tbody.addEventListener('dragend', function() {
+    if (dragRow) dragRow.classList.remove('dragging');
+    dragRow = null;
+    clearOver();
+  });
+
+  tbody.addEventListener('dragover', function(e) {
+    var row = e.target.closest('tr.cam-row');
+    if (!row || row === dragRow) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    var rect = row.getBoundingClientRect();
+    var midY = rect.top + rect.height / 2;
+    clearOver();
+    if (e.clientY < midY) row.classList.add('drag-over-top');
+    else row.classList.add('drag-over-bottom');
+  });
+
+  tbody.addEventListener('dragleave', function(e) {
+    var row = e.target.closest('tr.cam-row');
+    if (row) {
+      row.classList.remove('drag-over-top');
+      row.classList.remove('drag-over-bottom');
+    }
+  });
+
+  tbody.addEventListener('drop', function(e) {
+    e.preventDefault();
+    var target = e.target.closest('tr.cam-row');
+    if (!target || !dragRow || target === dragRow) { clearOver(); return; }
+    var rect = target.getBoundingClientRect();
+    var before = e.clientY < (rect.top + rect.height / 2);
+    if (before) tbody.insertBefore(dragRow, target);
+    else tbody.insertBefore(dragRow, target.nextSibling);
+    clearOver();
+    saveOrder();
+  });
+
+  function saveOrder() {
+    var ids = Array.prototype.map.call(tbody.querySelectorAll('tr.cam-row'),
+      function(r){ return parseInt(r.dataset.camId, 10); });
+    fetch('/api/cams/reorder', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids })
+    }).then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j.ok) { alert('Speichern fehlgeschlagen: ' + (j.error || 'unbekannt')); location.reload(); }
+        else { updateArrows(); }
+      })
+      .catch(function(e){ alert('Netzwerk-Fehler: ' + e); location.reload(); });
+  }
+
+  function updateArrows() {
+    // Aktiviere/deaktiviere Pfeile passend zur neuen Reihenfolge
+    var rows = tbody.querySelectorAll('tr.cam-row');
+    rows.forEach(function(r, i) {
+      var ups = r.querySelectorAll('form[action$="/move_up"] button');
+      var dns = r.querySelectorAll('form[action$="/move_down"] button');
+      ups.forEach(function(b){ b.disabled = (i === 0); });
+      dns.forEach(function(b){ b.disabled = (i === rows.length - 1); });
+    });
+  }
+})();
+</script>
+
+{% endblock %}
+{% block content %}
+
+<div class="section-head">
+  <h2>Webcams</h2>
+  <a class="btn" href="/cams/new">+ Neue Webcam</a>
+</div>
+
+<div class="table-wrap"><table class="table">
+  <thead>
+    <tr>
+      <th>Reihenfolge</th>
+      <th>Name</th>
+      <th>URL</th>
+      <th>Album</th>
+      <th>Intervall</th>
+      <th>Fenster</th>
+      <th>Tage</th>
+      <th>Status</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody id="cam-tbody">
+    {% for cam in cams %}
+    <tr draggable="true" data-cam-id="{{ cam.id }}" class="cam-row">
+      <td class="sort-cell">
+        <span class="drag-handle" title="Zum Umsortieren ziehen">⋮⋮</span>
+        <form method="post" action="/cams/{{ cam.id }}/move_up" style="display:inline">
+          <button class="btn small ghost sort-btn" type="submit"
+                  {% if loop.first %}disabled{% endif %}
+                  title="Nach oben">▲</button>
+        </form>
+        <form method="post" action="/cams/{{ cam.id }}/move_down" style="display:inline">
+          <button class="btn small ghost sort-btn" type="submit"
+                  {% if loop.last %}disabled{% endif %}
+                  title="Nach unten">▼</button>
+        </form>
+      </td>
+      <td>
+        <strong>{{ cam.name }}</strong>
+        {% if not cam.enabled %}<span class="pill off">aus</span>{% endif %}
+      </td>
+      <td class="url-cell" title="{{ cam.url }}">{{ cam.url[:50] }}{% if cam.url|length > 50 %}…{% endif %}</td>
+      <td>{{ cam.album.name if cam.album else "—" }}</td>
+      <td>{{ cam.interval_minutes }} min</td>
+      <td>
+        {% if cam.use_solar %}
+          ☀ Sunrise/Sunset
+          {% if cam.solar_offset_min %}({{ cam.solar_offset_min }}m){% endif %}
+        {% else %}
+          {{ cam.time_start or "00:00" }}–{{ cam.time_end or "23:59" }}
+        {% endif %}
+      </td>
+      <td class="weekdays-cell">
+        {% for i in range(7) %}
+          <span class="day {% if cam.weekdays[i] == '1' %}on{% endif %}"
+                title="{% if cam.weekdays[i] == '1' %}aktiv{% else %}aus{% endif %}">{{ WEEKDAY_LABELS[i] }}</span>
+        {% endfor %}
+      </td>
+      <td><span class="pill status-{{ cam.last_status or 'unknown' }}">{{ cam.last_status or "—" }}</span></td>
+      <td class="actions-cell">
+        <a class="btn small ghost" href="/cams/{{ cam.id }}/edit">Bearbeiten</a>
+        <form method="post" action="/cams/{{ cam.id }}/toggle" style="display:inline">
+          <button class="btn small ghost" type="submit">{{ "Pause" if cam.enabled else "An" }}</button>
+        </form>
+        <form method="post" action="/cams/{{ cam.id }}/delete" style="display:inline"
+              onsubmit="return confirm('Webcam «{{ cam.name }}» wirklich löschen?');">
+          <button class="btn small danger" type="submit">Löschen</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="empty">Noch keine Webcams angelegt.</td></tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+
+
+<script id="cam-dnd-script">
+(function() {
+  var tbody = document.getElementById('cam-tbody');
+  if (!tbody) return;
+  var dragRow = null;
+
+  function clearOver() {
+    Array.prototype.forEach.call(tbody.querySelectorAll('.drag-over-top, .drag-over-bottom'),
+      function(el){ el.classList.remove('drag-over-top'); el.classList.remove('drag-over-bottom'); });
+  }
+
+  tbody.addEventListener('dragstart', function(e) {
+    var row = e.target.closest('tr.cam-row');
+    if (!row) return;
+    dragRow = row;
+    row.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', row.dataset.camId); } catch(_){}
+  });
+
+  tbody.addEventListener('dragend', function() {
+    if (dragRow) dragRow.classList.remove('dragging');
+    dragRow = null;
+    clearOver();
+  });
+
+  tbody.addEventListener('dragover', function(e) {
+    var row = e.target.closest('tr.cam-row');
+    if (!row || row === dragRow) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    var rect = row.getBoundingClientRect();
+    var midY = rect.top + rect.height / 2;
+    clearOver();
+    if (e.clientY < midY) row.classList.add('drag-over-top');
+    else row.classList.add('drag-over-bottom');
+  });
+
+  tbody.addEventListener('dragleave', function(e) {
+    var row = e.target.closest('tr.cam-row');
+    if (row) {
+      row.classList.remove('drag-over-top');
+      row.classList.remove('drag-over-bottom');
+    }
+  });
+
+  tbody.addEventListener('drop', function(e) {
+    e.preventDefault();
+    var target = e.target.closest('tr.cam-row');
+    if (!target || !dragRow || target === dragRow) { clearOver(); return; }
+    var rect = target.getBoundingClientRect();
+    var before = e.clientY < (rect.top + rect.height / 2);
+    if (before) tbody.insertBefore(dragRow, target);
+    else tbody.insertBefore(dragRow, target.nextSibling);
+    clearOver();
+    saveOrder();
+  });
+
+  function saveOrder() {
+    var ids = Array.prototype.map.call(tbody.querySelectorAll('tr.cam-row'),
+      function(r){ return parseInt(r.dataset.camId, 10); });
+    fetch('/api/cams/reorder', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids })
+    }).then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j.ok) { alert('Speichern fehlgeschlagen: ' + (j.error || 'unbekannt')); location.reload(); }
+        else { updateArrows(); }
+      })
+      .catch(function(e){ alert('Netzwerk-Fehler: ' + e); location.reload(); });
+  }
+
+  function updateArrows() {
+    // Aktiviere/deaktiviere Pfeile passend zur neuen Reihenfolge
+    var rows = tbody.querySelectorAll('tr.cam-row');
+    rows.forEach(function(r, i) {
+      var ups = r.querySelectorAll('form[action$="/move_up"] button');
+      var dns = r.querySelectorAll('form[action$="/move_down"] button');
+      ups.forEach(function(b){ b.disabled = (i === 0); });
+      dns.forEach(function(b){ b.disabled = (i === rows.length - 1); });
+    });
+  }
+})();
+</script>
+
+{% endblock %}

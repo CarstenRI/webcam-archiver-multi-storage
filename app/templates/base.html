@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Webcam-Uploader{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/dashboard" title="Zum Dashboard">
+      <span class="logo">📷</span>
+      <span class="title">Webcam-Uploader</span>
+      <small>v{{ app_version }}</small>
+    </a>
+    <button class="nav-toggle" type="button" aria-label="Menü ein-/ausblenden" aria-expanded="false" id="nav-toggle">
+      <span class="nav-toggle-bars" aria-hidden="true"></span>
+    </button>
+    <nav id="primary-nav">
+      <a href="/dashboard" class="{% if request.url.path.startswith('/dashboard') or request.url.path == '/' %}active{% endif %}">Dashboard</a>
+      <a href="/cams" class="{% if request.url.path.startswith('/cams') %}active{% endif %}">Webcams</a>
+      <a href="/albums" class="{% if request.url.path.startswith('/albums') %}active{% endif %}">Alben</a>
+      <a href="/storage" class="{% if request.url.path.startswith('/storage') %}active{% endif %}">Speicherziele</a>
+      <a href="/logs" class="{% if request.url.path.startswith('/logs') %}active{% endif %}">Logs</a>
+      <a href="/settings" class="{% if request.url.path.startswith('/settings') %}active{% endif %}">Einstellungen</a>
+      <a href="/logout" class="logout-link" title="Abmelden">⎋ Abmelden</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <small>Webcam-Uploader &middot; Status:
+      {% if request.url.path != '/settings' %}
+        <a href="/settings">Amazon-Login prüfen</a>
+      {% else %}
+        Einstellungen
+      {% endif %}
+    </small>
+  </footer>
+
+  <script>
+    // Burger-Menue-Toggle (greift nur in der Mobile-Media-Query, daher kein Eingriff auf Desktop)
+    (function() {
+      var btn = document.getElementById('nav-toggle');
+      var nav = document.getElementById('primary-nav');
+      if (!btn || !nav) return;
+      btn.addEventListener('click', function() {
+        var open = nav.classList.toggle('is-open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    })();
+  </script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

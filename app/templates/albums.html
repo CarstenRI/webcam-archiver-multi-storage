@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Alben – Webcam-Uploader{% endblock %}
+{% block content %}
+
+<h2>Alben</h2>
+<p class="muted">Alben dienen als Sortierhilfe in deiner Amazon-Photos-Bibliothek. Beim ersten Upload wird das Album automatisch in Amazon Photos angelegt.</p>
+
+<form method="post" action="/albums/save" class="inline-form">
+  <input type="text" name="name" placeholder="Neues Album, z.B. ‚Webcams – Alpen‘" required>
+  <button class="btn primary" type="submit">Anlegen</button>
+</form>
+
+<div class="table-wrap"><table class="table">
+  <thead><tr><th>Reihenfolge</th><th>Name</th><th>Cams</th><th></th></tr></thead>
+  <tbody id="album-tbody">
+    {% for a in albums %}
+    <tr draggable="true" data-album-id="{{ a.id }}" class="album-row">
+      <td class="sort-cell">
+        <span class="drag-handle" title="Zum Umsortieren ziehen">⋮⋮</span>
+        <form method="post" action="/albums/{{ a.id }}/move_up" style="display:inline">
+          <button class="btn small ghost sort-btn" type="submit"
+                  {% if loop.first %}disabled{% endif %}
+                  title="Nach oben">▲</button>
+        </form>
+        <form method="post" action="/albums/{{ a.id }}/move_down" style="display:inline">
+          <button class="btn small ghost sort-btn" type="submit"
+                  {% if loop.last %}disabled{% endif %}
+                  title="Nach unten">▼</button>
+        </form>
+      </td>
+      <td><strong>{{ a.name }}</strong></td>
+      <td>{{ a.cams|length }}</td>
+      <td class="actions-cell">
+        <form method="post" action="/albums/{{ a.id }}/delete" style="display:inline"
+              onsubmit="return confirm('Album «{{ a.name }}» wirklich löschen? (Cams werden NICHT gelöscht, nur die Zuordnung)');">
+          <button class="btn small danger" type="submit">Löschen</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="empty">Noch keine Alben angelegt.</td></tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+
+<script id="album-dnd-script">
+(function() {
+  var tbody = document.getElementById('album-tbody');
+  if (!tbody) return;
+  var dragRow = null;
+
+  function clearOver() {
+    Array.prototype.forEach.call(tbody.querySelectorAll('.drag-over-top, .drag-over-bottom'),
+      function(el){ el.classList.remove('drag-over-top'); el.classList.remove('drag-over-bottom'); });
+  }
+
+  tbody.addEventListener('dragstart', function(e) {
+    var row = e.target.closest('tr.album-row');
+    if (!row) return;
+    dragRow = row;
+    row.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', row.dataset.albumId); } catch(_){}
+  });
+
+  tbody.addEventListener('dragend', function() {
+    if (dragRow) dragRow.classList.remove('dragging');
+    dragRow = null;
+    clearOver();
+  });
+
+  tbody.addEventListener('dragover', function(e) {
+    var row = e.target.closest('tr.album-row');
+    if (!row || row === dragRow) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    var rect = row.getBoundingClientRect();
+    var midY = rect.top + rect.height / 2;
+    clearOver();
+    if (e.clientY < midY) row.classList.add('drag-over-top');
+    else row.classList.add('drag-over-bottom');
+  });
+
+  tbody.addEventListener('dragleave', function(e) {
+    var row = e.target.closest('tr.album-row');
+    if (row) {
+      row.classList.remove('drag-over-top');
+      row.classList.remove('drag-over-bottom');
+    }
+  });
+
+  tbody.addEventListener('drop', function(e) {
+    e.preventDefault();
+    var target = e.target.closest('tr.album-row');
+    if (!target || !dragRow || target === dragRow) { clearOver(); return; }
+    var rect = target.getBoundingClientRect();
+    var before = e.clientY < (rect.top + rect.height / 2);
+    if (before) tbody.insertBefore(dragRow, target);
+    else tbody.insertBefore(dragRow, target.nextSibling);
+    clearOver();
+    saveOrder();
+  });
+
+  function saveOrder() {
+    var ids = Array.prototype.map.call(tbody.querySelectorAll('tr.album-row'),
+      function(r){ return parseInt(r.dataset.albumId, 10); });
+    fetch('/api/albums/reorder', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids })
+    }).then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j.ok) { alert('Speichern fehlgeschlagen: ' + (j.error || 'unbekannt')); location.reload(); }
+        else { updateArrows(); }
+      })
+      .catch(function(e){ alert('Netzwerk-Fehler: ' + e); location.reload(); });
+  }
+
+  function updateArrows() {
+    var rows = tbody.querySelectorAll('tr.album-row');
+    rows.forEach(function(r, i) {
+      var ups = r.querySelectorAll('form[action$="/move_up"] button');
+      var dns = r.querySelectorAll('form[action$="/move_down"] button');
+      ups.forEach(function(b){ b.disabled = (i === 0); });
+      dns.forEach(function(b){ b.disabled = (i === rows.length - 1); });
+    });
+  }
+})();
+</script>
+
+{% endblock %}

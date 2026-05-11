@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Logs – Webcam-Uploader{% endblock %}
+{% block content %}
+
+<h2>Logs</h2>
+
+{% if flash %}
+<div class="banner ok" style="margin-bottom:12px">{{ flash }}</div>
+{% endif %}
+
+<div class="logs-toolbar">
+  <form method="get" action="/logs" class="inline-form" style="margin:0">
+    <select name="cam_id">
+      <option value="">Alle Cams</option>
+      {% for c in cams %}
+        <option value="{{ c.id }}" {% if filter_cam_id == c.id %}selected{% endif %}>{{ c.name }}</option>
+      {% endfor %}
+    </select>
+    <select name="status">
+      <option value="">Alle Status</option>
+      {% for s in ['success', 'partial', 'duplicate', 'fetch_error', 'upload_error'] %}
+        <option value="{{ s }}" {% if filter_status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit">Filtern</button>
+    <a class="btn ghost" href="/logs">Reset</a>
+  </form>
+
+  <form method="post" action="/logs/clear" class="inline-form" style="margin:0"
+        onsubmit="return confirm('Wirklich {{ total_matching }} Log-Eintraege loeschen?{% if filter_cam_id or filter_status %} (Aktueller Filter wird beruecksichtigt.){% else %} ALLE Logs werden geloescht.{% endif %}');">
+    {% if filter_cam_id %}<input type="hidden" name="cam_id" value="{{ filter_cam_id }}">{% endif %}
+    {% if filter_status %}<input type="hidden" name="status" value="{{ filter_status }}">{% endif %}
+    <button class="btn danger" type="submit" {% if total_matching == 0 %}disabled{% endif %}>
+      Loeschen{% if filter_cam_id or filter_status %} (gefiltert: {{ total_matching }}){% else %} ({{ total_matching }}){% endif %}
+    </button>
+  </form>
+</div>
+
+<div class="table-wrap"><table class="logs">
+  <thead>
+    <tr><th>Zeit</th><th>Cam</th><th>Status</th><th>Bytes</th><th>pHash</th><th>Meldung</th></tr>
+  </thead>
+  <tbody>
+    {% for f in rows %}
+    <tr class="row-{{ f.status }}">
+      <td>{{ f.started_at | localfmt('%d.%m.%Y %H:%M:%S') }}</td>
+      <td>{{ f.cam.name if f.cam else '?' }}</td>
+      <td><span class="pill status-{{ f.status }}">{{ f.status }}</span></td>
+      <td>{{ "{:,}".format(f.bytes).replace(",", ".") if f.bytes else "" }}</td>
+      <td class="mono">{{ f.phash[:12] if f.phash else "" }}</td>
+      <td class="msg">
+        {{ f.message or "" }}
+        {% if f.target_uploads %}
+          <br>
+          {% for tu in f.target_uploads %}
+            <small class="muted">→ {{ tu.target_name }}: <span class="status-{{ tu.status }}">{{ tu.status }}</span>{% if tu.message %} ({{ tu.message[:120] }}){% endif %}</small><br>
+          {% endfor %}
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty">Keine Treffer.</td></tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+
+{% endblock %}

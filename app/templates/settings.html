@@ -1,0 +1,489 @@
+{% extends "base.html" %}
+{% block title %}Einstellungen – Webcam-Uploader{% endblock %}
+{% block content %}
+
+{% set err = request.query_params.get('err') %}
+{% set ok = request.query_params.get('ok') %}
+
+<div class="settings-head">
+  <h2>Einstellungen</h2>
+  <p class="muted">Konfiguration, Backups und Cookies. Änderungen wirken zum Teil erst nach einem Service-Neustart.</p>
+</div>
+
+{% if err %}
+<div class="banner warn">
+  {% if err == 'user_exists' %}❌ Username existiert bereits.
+  {% elif err == 'last_admin' %}❌ Der letzte Admin kann nicht entfernt werden.
+  {% elif err == 'no_file' %}❌ Keine Datei ausgewählt.
+  {% elif err == 'not_sqlite' %}❌ Datei ist keine SQLite-Datenbank.
+  {% elif err == 'port_invalid' %}❌ Ungültiger Port – bitte eine Zahl angeben.
+  {% elif err == 'port_range' %}❌ Port muss zwischen 1 und 65535 liegen.
+  {% elif err == 'port_privileged' %}❌ Ports &lt; 1024 sind privilegiert und für den Service-User nicht erreichbar (Ausnahme: 80/443).
+  {% elif err == 'port_write' %}❌ Konnte Port nicht schreiben. Hat der Service-User Schreibrechte auf <code>{{ env_status.path }}</code>?
+  {% else %}❌ Fehler: {{ err }}{% endif %}
+</div>
+{% endif %}
+{% if ok %}
+<div class="banner ok">
+  {% if ok == 'restored' %}✓ Backup eingespielt. <strong>Service-Neustart erforderlich:</strong>
+    <code>sudo systemctl restart webcam-uploader</code>
+  {% elif ok.startswith('port_restart_') %}{% set new_port = ok.replace('port_restart_', '') %}
+    <div class="port-restart-banner" data-new-port="{{ new_port }}">
+      <strong>✓ Port gespeichert auf {{ new_port }}.</strong>
+      Service wird automatisch neu gestartet — die Verbindung wird kurz unterbrochen.
+      <div class="port-redirect-info">
+        Umleitung zum neuen Port in <strong><span id="port-countdown">8</span> Sekunden</strong>…
+        <a id="port-new-url-link" href="#" class="btn small primary" style="margin-left:8px">Jetzt umleiten</a>
+      </div>
+    </div>
+  {% elif ok.startswith('port_saved_') %}✓ Port gespeichert: <strong>{{ ok.replace('port_saved_', '') }}</strong>.
+    Service-Restart konnte nicht automatisch angestoßen werden — bitte manuell:
+    <code>sudo systemctl restart webcam-uploader</code>
+    (Pruefe ggf. die sudoers-Datei <code>/etc/sudoers.d/webcam-uploader</code>.)
+  {% else %}✓ {{ ok }}{% endif %}
+</div>
+{% endif %}
+
+<div class="settings-layout">
+  <aside class="settings-nav" aria-label="Schnellnavigation">
+    <a href="#system">📊 System-Status</a>
+    <a href="#mein-passwort">🔑 Mein Passwort</a>
+    {% if current_user.role == 'admin' %}
+    <a href="#netzwerk">🌐 Netzwerk &amp; Port</a>
+    <a href="#users">👥 User-Verwaltung</a>
+    <a href="#retention">🧹 Log-Aufbewahrung</a>
+    <a href="#backup">💾 Backup &amp; Restore</a>
+    {% endif %}
+    <a href="#amazon">🍪 Amazon Cookies</a>
+    <a href="#wartung">🛠 Wartung</a>
+  </aside>
+
+  <div class="settings-main">
+
+  <section class="card settings-card" id="system">
+    <header class="card-head">
+      <h3><span class="card-icon">📊</span> System-Status</h3>
+      <small class="muted">Bestand und Laufzeit auf einen Blick.</small>
+    </header>
+    <div class="stats stats-compact">
+      <div class="stat success"><span class="num">{{ stats.cam_count }}</span> Webcams</div>
+      <div class="stat total"><span class="num">{{ stats.target_count }}</span> Speicherziele</div>
+      <div class="stat dup"><span class="num">{{ stats.fetch_count }}</span> Fetches</div>
+      <div class="stat success"><span class="num">{{ stats.user_count }}</span> User</div>
+    </div>
+    <dl class="kv-list">
+      <dt>Service gestartet</dt>
+      <dd>{{ stats.startup_at | localfmt('%d.%m.%Y %H:%M:%S') }} <small class="muted">({{ stats.startup_at | rel }})</small></dd>
+      <dt>Letzter Fetch</dt>
+      <dd>
+        {% if stats.last_fetch_at %}{{ stats.last_fetch_at | localfmt('%d.%m.%Y %H:%M:%S') }} <small class="muted">({{ stats.last_fetch_at | rel }})</small>{% else %}<span class="muted">noch nichts</span>{% endif %}
+      </dd>
+      <dt>Version</dt>
+      <dd><code>{{ app_version }}</code></dd>
+      <dt>DB-Größe</dt>
+      <dd>{{ "%.2f MB" % (stats.db_size / 1024 / 1024) }}</dd>
+      <dt>Plattenplatz (Data-Dir)</dt>
+      <dd>
+        <strong>{{ "%.1f GB frei" % (stats.disk_free / 1024 / 1024 / 1024) }}</strong>
+        <small class="muted">von {{ "%.1f GB" % (stats.disk_total / 1024 / 1024 / 1024) }}</small>
+      </dd>
+    </dl>
+  </section>
+
+  <section class="card settings-card" id="mein-passwort">
+    <header class="card-head">
+      <h3><span class="card-icon">🔑</span> Mein Passwort</h3>
+      <small class="muted">Angemeldet als <strong>{{ current_user.username }}</strong> · {{ current_user.role }}</small>
+    </header>
+    {% if current_user.id == 0 %}
+      <p class="muted">Du bist via <code>.env</code>-Fallback eingeloggt. Bitte erst einen DB-User anlegen.</p>
+    {% else %}
+    <form method="post" action="/settings/me/password" class="form form-tight">
+      <label>
+        <span>Neues Passwort</span>
+        <input type="password" name="password" required minlength="4" autocomplete="new-password" placeholder="mindestens 4 Zeichen">
+        <small>Der Browser fragt nach dem Speichern u.U. erneut nach den Credentials.</small>
+      </label>
+      <div class="form-actions">
+        <button class="btn primary" type="submit">Passwort ändern</button>
+      </div>
+    </form>
+    {% endif %}
+  </section>
+
+  {% if current_user.role == 'admin' %}
+  <section class="card settings-card" id="netzwerk">
+    <header class="card-head">
+      <h3><span class="card-icon">🌐</span> Netzwerk &amp; Port</h3>
+      <small class="muted">Web-UI-Port ändern. Service-Neustart erforderlich.</small>
+    </header>
+    <dl class="kv-list">
+      <dt>Aktueller Port</dt>
+      <dd><code>{{ env_status.port }}</code></dd>
+      <dt>Host-Bind</dt>
+      <dd><code>{{ env_status.host }}</code></dd>
+      <dt>Konfigurationsdatei</dt>
+      <dd><code>{{ env_status.path }}</code>
+        {% if not env_status.exists %}<span class="pill off">fehlt</span>
+        {% elif not env_status.writable %}<span class="pill off">nicht schreibbar</span>
+        {% else %}<span class="pill on">schreibbar</span>{% endif %}
+      </dd>
+    </dl>
+    {% if env_status.writable %}
+    <form method="post" action="/settings/port" class="form form-tight"
+          onsubmit="return confirm('Port auf den neuen Wert ändern? Wirkt erst nach: sudo systemctl restart webcam-uploader');">
+      <div class="form-grid">
+        <label>
+          <span>Neuer Port</span>
+          <input type="number" name="port" required min="1" max="65535" value="{{ env_status.port }}">
+          <small>Typische freie Ports: 8080, 8081, 8088, 8888, 9000. Werte &lt; 1024 sind nicht erlaubt (privilegiert).</small>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button class="btn primary" type="submit">Port speichern</button>
+        <small class="muted">↳ Danach manuell: <code>sudo systemctl restart webcam-uploader</code></small>
+      </div>
+    </form>
+    {% else %}
+    <p class="muted">Der Service-User hat keine Schreibrechte auf die Konfigurationsdatei. Manuell editieren:
+      <code>sudo nano {{ env_status.path }}</code> → <code>WU_PORT=...</code> setzen → <code>sudo systemctl restart webcam-uploader</code>.</p>
+    {% endif %}
+  </section>
+
+  <section class="card settings-card" id="users">
+    <header class="card-head">
+      <h3><span class="card-icon">👥</span> User-Verwaltung</h3>
+      <small class="muted">Admin/Viewer-Rollen, Passwort-Reset, neue User anlegen.</small>
+    </header>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th>Username</th><th>Rolle</th><th>Angelegt</th><th>Aktionen</th></tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td><strong>{{ u.username }}</strong>{% if u.id == current_user.id %} <span class="pill">du</span>{% endif %}</td>
+            <td>
+              <form method="post" action="/settings/users/{{ u.id }}/role" style="display:inline">
+                <select name="role" onchange="this.form.submit()">
+                  <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
+                  <option value="viewer" {% if u.role == 'viewer' %}selected{% endif %}>viewer</option>
+                </select>
+              </form>
+            </td>
+            <td>{{ u.created_at | localfmt('%d.%m.%Y') }}</td>
+            <td class="actions-cell">
+              <form method="post" action="/settings/users/{{ u.id }}/password" style="display:inline-flex; gap:4px"
+                    onsubmit="var p=this.querySelector('input[name=password]'); if(!p.value){return false;}">
+                <input type="password" name="password" placeholder="neues Passwort" minlength="4" style="width:140px;padding:4px 8px">
+                <button class="btn small ghost" type="submit">setzen</button>
+              </form>
+              <form method="post" action="/settings/users/{{ u.id }}/delete" style="display:inline"
+                    onsubmit="return confirm('User «{{ u.username }}» wirklich löschen?');">
+                <button class="btn small danger" type="submit"
+                        {% if u.id == current_user.id %}disabled title="Eigenen User nicht löschbar"{% endif %}>
+                  Löschen
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Neuen User anlegen</h4>
+    <form method="post" action="/settings/users/create" class="form form-tight">
+      <div class="form-grid">
+        <label>
+          <span>Username</span>
+          <input type="text" name="username" required>
+        </label>
+        <label>
+          <span>Passwort</span>
+          <input type="password" name="password" required minlength="4">
+        </label>
+        <label>
+          <span>Rolle</span>
+          <select name="role">
+            <option value="viewer">viewer (nur lesen)</option>
+            <option value="admin">admin (alles)</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button class="btn primary" type="submit">+ User anlegen</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card settings-card" id="retention">
+    <header class="card-head">
+      <h3><span class="card-icon">🧹</span> Log-Aufbewahrung</h3>
+      <small class="muted">Automatisches Aufräumen alter Fetch-Einträge.</small>
+    </header>
+    <form method="post" action="/settings/retention" class="form form-tight">
+      <label>
+        <span>Fetches älter als (Tage) löschen</span>
+        <input type="number" name="retention_days" min="0" max="3650"
+               value="{{ retention_days }}" placeholder="0">
+        <small><strong>0 = unbegrenzt.</strong> Läuft täglich auf alle Fetch- und Target-Upload-Einträge.
+          Bild-Dateien selbst werden über das Retention-Feld am Speicherziel verwaltet.</small>
+      </label>
+      <div class="form-actions">
+        <button class="btn primary" type="submit">Speichern</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card settings-card" id="backup">
+    <header class="card-head">
+      <h3><span class="card-icon">💾</span> Backup &amp; Restore</h3>
+      <small class="muted">SQLite-Datenbank sichern und wiederherstellen.</small>
+    </header>
+    <div class="backup-actions">
+      <a class="btn primary" href="/settings/backup">⬇ Backup herunterladen</a>
+      <small class="muted">Lädt die aktuelle <code>webcam-uploader.sqlite3</code> in deinen Browser-Download-Ordner.</small>
+    </div>
+    <hr class="hr-dim">
+    <form method="post" action="/settings/restore" class="form form-tight" enctype="multipart/form-data"
+          onsubmit="return confirm('Aktuelle Datenbank durch das hochgeladene Backup ersetzen? Service-Neustart erforderlich.');">
+      <label>
+        <span>Backup einspielen</span>
+        <input type="file" name="backup_file" accept=".sqlite3,.db,application/x-sqlite3" required>
+        <small>Die aktuelle DB wird vorher als <code>.prerestore</code> gesichert.
+          Nach dem Einspielen ist ein <code>sudo systemctl restart webcam-uploader</code> nötig.</small>
+      </label>
+      <div class="form-actions">
+        <button class="btn danger" type="submit">⚠ Backup einspielen</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
+  <section class="card settings-card" id="amazon">
+    <header class="card-head">
+      <h3><span class="card-icon">🍪</span> Amazon Photos – Cookies</h3>
+      <small class="muted">Inoffizielle API, Cookies laufen alle paar Tage ab.</small>
+    </header>
+
+    {% if current_user.role == 'admin' %}
+    <form method="post" action="/settings/save" class="form" id="cookie-form">
+      <fieldset>
+        <legend>Cookies eintragen</legend>
+        <p class="muted" style="margin:0 0 12px 0">
+          Pflichtfelder mit <span class="required">*</span> markiert. Leere Felder lassen den vorhandenen Wert unverändert.
+        </p>
+        <div class="cookie-grid">
+          {% for cname, required in cookie_names %}
+            {% set cval = cookie_values.get(cname, '') %}
+            <label class="cookie-field">
+              <span>
+                <code>{{ cname }}</code>{% if required %} <span class="required">*</span>{% endif %}
+                {% if cval %}<span class="cookie-status ok">✓ gesetzt</span>{% else %}<span class="cookie-status missing">✗ fehlt</span>{% endif %}
+              </span>
+              <input type="password" name="cookie__{{ cname }}"
+                     value="{{ cval }}"
+                     placeholder="leer = unverändert lassen"
+                     autocomplete="off"
+                     data-cookie-name="{{ cname }}">
+            </label>
+          {% endfor %}
+        </div>
+        <div class="form-actions" style="margin-top:14px">
+          <button class="btn primary" type="submit">Speichern &amp; Re-Login</button>
+          <button class="btn ghost" type="button" onclick="toggleCookieReveal()">Werte anzeigen/verbergen</button>
+          <button class="btn ghost" type="button" onclick="clearAllCookieFields()">Alle Felder leeren</button>
+        </div>
+      </fieldset>
+
+      <details class="cookie-helper">
+        <summary><strong>🪄 Helfer: Cookies komfortabel aus dem Browser holen</strong></summary>
+
+        <div class="helper-step">
+          <h4>Methode A · DevTools-Tabelle einfügen <span class="muted">(empfohlen)</span></h4>
+          <ol>
+            <li>In Chrome/Edge auf <code>https://www.amazon.de/photos</code> einloggen.</li>
+            <li><kbd>F12</kbd> drücken → Tab <strong>Application</strong> → links <strong>Cookies</strong> → <strong>https://www.amazon.de</strong></li>
+            <li>In der Cookie-Tabelle: <kbd>Strg+A</kbd> markiert alles, <kbd>Strg+C</kbd> kopiert.</li>
+            <li>Hier einfügen und auf „Felder befüllen" klicken:</li>
+          </ol>
+          <textarea id="devtools-paste" rows="4"
+                    placeholder="Hier die DevTools-Cookie-Tabelle (Tab-Separated) einfügen..."></textarea>
+          <div style="margin-top:8px">
+            <button class="btn small" type="button" onclick="parseDevToolsPaste()">📋 Felder befüllen</button>
+            <span id="paste-feedback" class="muted" style="margin-left:8px"></span>
+          </div>
+        </div>
+
+        <div class="helper-step">
+          <h4>Methode B · JSON einfügen</h4>
+          <p class="muted">Falls du die Cookies bereits als JSON hast (z.B. aus einem Backup):</p>
+          <textarea id="json-import" rows="4"
+                    placeholder='{"at-acbde": "Atza|...", "session-id": "...", ...}'></textarea>
+          <div style="margin-top:8px">
+            <button class="btn small" type="button" onclick="parseJsonImport()">JSON importieren</button>
+            <span id="json-feedback" class="muted" style="margin-left:8px"></span>
+          </div>
+        </div>
+
+        <div class="helper-step">
+          <h4>Methode C · Browser-Console-Snippet</h4>
+          <p class="muted">
+            In den DevTools <strong>Console</strong>-Tab einfügen und Enter drücken.
+            Funktioniert nur für nicht-HttpOnly-Cookies (also <code>session-id</code>);
+            für den Rest brauchst du Methode A.
+          </p>
+<pre class="code-snippet">copy(JSON.stringify(Object.fromEntries(document.cookie.split('; ').map(c=>{const i=c.indexOf('=');return [c.slice(0,i),c.slice(i+1)];}))));console.log('JSON ist in der Zwischenablage')</pre>
+        </div>
+      </details>
+
+      <fieldset>
+        <legend>Erweitert</legend>
+        <label>
+          <span>Komplettes JSON (Power-User, überschreibt alle Einzelfelder)</span>
+          <textarea name="amazon_cookies" rows="4" placeholder="Leer lassen, um die Einzelfelder zu verwenden"></textarea>
+        </label>
+      </fieldset>
+    </form>
+    {% else %}
+      <p class="muted">Nur Admins können die Amazon-Cookies ändern.</p>
+      {% if cookie_keys %}
+        <p class="muted">Aktuell hinterlegt: <code>{{ cookie_keys|join(', ') }}</code></p>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="card settings-card" id="wartung">
+    <header class="card-head">
+      <h3><span class="card-icon">🛠</span> Wartung</h3>
+      <small class="muted">Nützliche Shell-Kommandos für den Server.</small>
+    </header>
+    <dl class="kv-list">
+      <dt>Service neustarten</dt>
+      <dd><code>sudo systemctl restart webcam-uploader</code></dd>
+      <dt>Status prüfen</dt>
+      <dd><code>sudo systemctl status webcam-uploader</code></dd>
+      <dt>Logs verfolgen</dt>
+      <dd><code>sudo journalctl -u webcam-uploader -f</code></dd>
+      <dt>Konfiguration</dt>
+      <dd><code>sudo nano {{ env_status.path }}</code></dd>
+    </dl>
+  </section>
+
+  </div><!-- /.settings-main -->
+</div><!-- /.settings-layout -->
+
+<script>
+function parseDevToolsPaste() {
+  var ta = document.getElementById('devtools-paste');
+  var fb = document.getElementById('paste-feedback');
+  var text = (ta.value || '').trim();
+  if (!text) { fb.textContent = 'Bitte zuerst etwas einfuegen.'; return; }
+  var lines = text.split(/\r?\n/);
+  var parsed = {};
+  lines.forEach(function(line) {
+    if (!line.trim()) return;
+    var parts = line.split(/\t+|\s{2,}/).filter(function(p){ return p.length; });
+    if (parts.length >= 2) {
+      var name = parts[0].trim();
+      var value = parts[1].trim();
+      if (name && value) parsed[name] = value;
+    }
+  });
+  var count = applyCookieValues(parsed);
+  fb.innerHTML = count > 0
+    ? '<span class="ok-text">✓ ' + count + ' Felder befuellt</span>'
+    : '<span class="warn">Kein passender Cookie erkannt – Format pruefen.</span>';
+}
+
+function parseJsonImport() {
+  var ta = document.getElementById('json-import');
+  var fb = document.getElementById('json-feedback');
+  var text = (ta.value || '').trim();
+  if (!text) { fb.textContent = 'Bitte zuerst etwas einfuegen.'; return; }
+  try {
+    var obj = JSON.parse(text);
+    if (typeof obj !== 'object' || Array.isArray(obj) || obj === null) throw new Error('Kein Objekt');
+    var count = applyCookieValues(obj);
+    fb.innerHTML = '<span class="ok-text">✓ ' + count + ' Felder befuellt</span>';
+  } catch(e) {
+    fb.innerHTML = '<span class="warn">Ungueltiges JSON: ' + e.message + '</span>';
+  }
+}
+
+function applyCookieValues(obj) {
+  var n = 0;
+  Object.keys(obj).forEach(function(name) {
+    var input = document.querySelector('input[data-cookie-name="' + name + '"]');
+    if (input && obj[name]) {
+      input.value = String(obj[name]);
+      var label = input.closest('.cookie-field');
+      if (label) {
+        var s = label.querySelector('.cookie-status');
+        if (s) { s.textContent = '✓ neu eingetragen'; s.className = 'cookie-status ok'; }
+      }
+      n++;
+    }
+  });
+  return n;
+}
+
+function toggleCookieReveal() {
+  document.querySelectorAll('.cookie-field input').forEach(function(inp) {
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+  });
+}
+
+function clearAllCookieFields() {
+  if (!confirm('Alle Cookie-Felder leeren? (Speichert noch nichts – nur die Anzeige.)')) return;
+  document.querySelectorAll('.cookie-field input').forEach(function(inp){ inp.value = ''; });
+}
+
+// Auto-Redirect nach Port-Aenderung (sobald Banner sichtbar ist).
+(function() {
+  var banner = document.querySelector('.port-restart-banner');
+  if (!banner) return;
+  var newPort = banner.getAttribute('data-new-port');
+  if (!newPort) return;
+  var newUrl = window.location.protocol + '//' + window.location.hostname + ':' + newPort + '/settings';
+  var link = document.getElementById('port-new-url-link');
+  if (link) link.href = newUrl;
+  var cd = document.getElementById('port-countdown');
+  var n = 8;
+  var iv = setInterval(function() {
+    n--;
+    if (cd) cd.textContent = String(Math.max(0, n));
+    if (n <= 0) {
+      clearInterval(iv);
+      window.location.replace(newUrl);
+    }
+  }, 1000);
+})();
+
+// Sidebar-Active-Highlight on scroll
+(function() {
+  var links = document.querySelectorAll('.settings-nav a[href^="#"]');
+  if (!links.length) return;
+  var sections = [];
+  links.forEach(function(a) {
+    var id = a.getAttribute('href').slice(1);
+    var el = document.getElementById(id);
+    if (el) sections.push({ id: id, el: el, link: a });
+  });
+  function onScroll() {
+    var y = window.scrollY + 120;
+    var current = null;
+    sections.forEach(function(s) {
+      if (s.el.offsetTop <= y) current = s;
+    });
+    links.forEach(function(a){ a.classList.remove('active'); });
+    if (current) current.link.classList.add('active');
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+</script>
+
+{% endblock %}

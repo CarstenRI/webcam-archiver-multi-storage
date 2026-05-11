@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Abgemeldet – Webcam-Uploader</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="container" style="text-align:center; padding-top:80px">
+    <h1 style="font-size:48px; margin:0 0 10px">👋</h1>
+    <h2>Du bist abgemeldet</h2>
+    <p class="muted" id="status">Browser-Cache wird invalidiert ...</p>
+    <p style="margin-top:30px">
+      <a class="btn primary" href="/dashboard">Erneut anmelden</a>
+    </p>
+    <p class="muted" style="margin-top:40px; font-size:12px">
+      Hinweis: HTTPBasic-Auth wird vom Browser zwischengespeichert.
+      Falls du nicht automatisch ausgeloggt wirst, schliesse das Browser-Fenster
+      oder oeffne ein neues Fenster im Inkognito-Modus.
+    </p>
+  </main>
+
+  <script>
+  // Logout-Trick fuer HTTPBasic:
+  // - Sende einen XHR mit absichtlich invaliden Credentials zu einer geschuetzten Route
+  // - Der Browser cached die NEUEN (invaliden) Credentials, vergisst die alten
+  // - Beim naechsten Request muss er erneut fragen
+  (function() {
+    function fakeAuth(callback) {
+      try {
+        // 1. moderner Fetch mit explizit gesetztem Authorization-Header
+        var fakeToken = btoa('logout-' + Date.now() + ':invalid-' + Math.random());
+        fetch('/api/health', {
+          method: 'GET',
+          credentials: 'omit',
+          headers: { 'Authorization': 'Basic ' + fakeToken }
+        }).catch(function(){});
+      } catch(e) {}
+
+      try {
+        // 2. legacy XHR-Trick (funktioniert in einigen aelteren Browsern)
+        var x = new XMLHttpRequest();
+        x.open('GET', '/api/health', false, 'logout', 'invalid-' + Date.now());
+        try { x.send(); } catch(e) {}
+      } catch(e) {}
+
+      // 3. Status-Text updaten
+      var s = document.getElementById('status');
+      if (s) s.textContent = 'Cache invalidiert. Beim erneuten Anmelden wirst du nach Username/Passwort gefragt.';
+      if (callback) setTimeout(callback, 100);
+    }
+    fakeAuth();
+  })();
+  </script>
+</body>
+</html>

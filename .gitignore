@@ -1,0 +1,60 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# --- IDEs / Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Project-specific ---
+# Local secrets / runtime state — never commit
+.env
+*.env
+!.env.example
+
+# SQLite databases & WAL files
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+
+# Image cache / previews / temp uploads (runtime data)
+previews/
+tmp/
+data/
+
+# Logs
+*.log
+log.log
+
+# Generated installer bundle (produced by scripts/make_bundle.sh,
+# published via GitHub Releases — not source-controlled)
+webcam-uploader-install.sh
+
+# Test / scratch files
+test_write.txt
+test_*.txt
+
+# Session compact notes (Claude-internal)
+compact-*.md

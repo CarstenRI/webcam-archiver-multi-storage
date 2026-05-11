@@ -1,0 +1,24 @@
+[Unit]
+Description=Webcam-Uploader – fetcht Webcam-URLs und lädt sie zu Amazon Photos
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=webcam-uploader
+Group=webcam-uploader
+WorkingDirectory=/opt/webcam-uploader
+EnvironmentFile=/etc/webcam-uploader/.env
+ExecStart=/opt/webcam-uploader/venv/bin/uvicorn app.main:app --host ${WU_HOST} --port ${WU_PORT} --proxy-headers
+Restart=always
+RestartSec=5
+
+# Härtung
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/webcam-uploader /etc/webcam-uploader
+
+[Install]
+WantedBy=multi-user.target

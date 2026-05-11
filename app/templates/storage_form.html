@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}{% if target %}Speicherziel bearbeiten{% else %}Neues Speicherziel{% endif %}{% endblock %}
+{% block content %}
+
+<div class="section-head">
+  <h2>{% if target %}Speicherziel bearbeiten{% else %}Neues Speicherziel{% endif %}</h2>
+  <a class="btn ghost" href="/storage">← Zurück</a>
+</div>
+
+{% if flash %}
+<div class="banner {% if flash.ok %}ok{% else %}warn{% endif %}">
+  {{ flash.msg }}
+</div>
+{% endif %}
+
+<form method="post" action="/storage/save" class="form">
+  {% if target %}<input type="hidden" name="id" value="{{ target.id }}">{% endif %}
+
+  <div class="form-grid">
+    <label>
+      <span>Name</span>
+      <input type="text" name="name" required
+             value="{{ target.name if target else '' }}"
+             placeholder="z.B. NAS Schlafzimmer">
+    </label>
+
+    <label>
+      <span>Typ</span>
+      <select name="type" id="type-select" {% if target %}disabled{% endif %}
+              onchange="this.form.submit()">
+        {% for t_id, t_label, t_desc in backend_types %}
+          <option value="{{ t_id }}"
+                  {% if (target and target.type == t_id) or (not target and selected_type == t_id) %}selected{% endif %}>
+            {{ t_label }}
+          </option>
+        {% endfor %}
+      </select>
+      {% if target %}
+        <input type="hidden" name="type" value="{{ target.type }}">
+        <small>Typ kann nach Anlage nicht mehr geändert werden.</small>
+      {% else %}
+        <small>Typ wechseln blendet die passenden Felder unten ein.</small>
+      {% endif %}
+    </label>
+
+    <label>
+      <span>Aktiv</span>
+      <input type="checkbox" name="enabled"
+             {% if not target or target.enabled %}checked{% endif %}>
+    </label>
+  </div>
+
+  {% if backend_description %}
+    <p class="muted" style="margin:0.5em 0">{{ backend_description }}</p>
+  {% endif %}
+
+  {% if backend_fields %}
+  <fieldset>
+    <legend>Verbindung</legend>
+    <div class="form-grid">
+      {% for f in backend_fields %}
+        {% set val = current_config.get(f.key, f.default) %}
+        <label {% if f.kind == 'textarea' %}class="span2"{% endif %}>
+          <span>{{ f.label }}{% if f.required %} *{% endif %}</span>
+          {% if f.kind == 'select' %}
+            <select name="cfg__{{ f.key }}">
+              {% for opt_v, opt_l in f.options %}
+                <option value="{{ opt_v }}" {% if val == opt_v %}selected{% endif %}>{{ opt_l }}</option>
+              {% endfor %}
+            </select>
+          {% elif f.kind == 'checkbox' %}
+            <input type="checkbox" name="cfg__{{ f.key }}"
+                   {% if val and val != "" and val != "0" %}checked{% endif %}>
+          {% elif f.kind == 'textarea' %}
+            <textarea name="cfg__{{ f.key }}" rows="3"
+                      placeholder="{{ f.placeholder }}">{{ val }}</textarea>
+          {% elif f.kind == 'password' %}
+            <input type="password" name="cfg__{{ f.key }}"
+                   value="{{ val }}"
+                   placeholder="{{ f.placeholder }}"
+                   {% if f.required %}required{% endif %}>
+          {% elif f.kind == 'number' %}
+            <input type="number" name="cfg__{{ f.key }}"
+                   value="{{ val }}"
+                   placeholder="{{ f.placeholder }}"
+                   {% if f.required %}required{% endif %}>
+          {% else %}
+            {% if selected_type == 'local' and f.key == 'base_path' %}
+              <div class="path-input-row">
+                <input type="text" name="cfg__{{ f.key }}" id="cfg-base-path"
+                       value="{{ val }}"
+                       placeholder="{{ f.placeholder }}"
+                       {% if f.required %}required{% endif %}>
+                <button type="button" class="btn ghost small" onclick="openFsBrowser()">📁 Durchsuchen</button>
+              </div>
+            {% else %}
+              <input type="text" name="cfg__{{ f.key }}"
+                     value="{{ val }}"
+                     placeholder="{{ f.placeholder }}"
+                     {% if f.required %}required{% endif %}>
+            {% endif %}
+          {% endif %}
+          {% if f.help %}<small>{{ f.help }}</small>{% endif %}
+        </label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  {% endif %}
+
+  {% if needs_path_template %}
+  <fieldset>
+    <legend>Pfad / Object-Key</legend>
+    <label>
+      <span>Pfad-Template</span>
+      <input type="text" name="path_template"
+             value="{{ target.path_template if target else default_path_template }}"
+             placeholder="{cam_slug}/{Y}-{m}-{d}/{H}-{M}-{S}{ext}">
+      <small>
+        Platzhalter: <code>{cam_slug}</code>, <code>{cam_id}</code>, <code>{cam_name}</code>,
+        <code>{album}</code>, <code>{album_slug}</code>,
+        <code>{Y}</code> <code>{m}</code> <code>{d}</code> <code>{H}</code> <code>{M}</code> <code>{S}</code>,
+        <code>{ymd}</code>, <code>{hms}</code>, <code>{ts}</code>, <code>{ext}</code>.
+        Schrägstriche werden als Unterordner interpretiert.
+      </small>
+    </label>
+  </fieldset>
+  {% else %}
+    <input type="hidden" name="path_template" value="{{ target.path_template if target else '' }}">
+  {% endif %}
+
+
+  {% if selected_type != 'amazon' %}
+  <fieldset>
+    <legend>Aufbewahrung</legend>
+    <label>
+      <span>Max. Anzahl Bilder pro Webcam</span>
+      <input type="number" name="retention_per_cam" min="0" max="1000000"
+             value="{{ target.retention_per_cam if target else 0 }}"
+             placeholder="0">
+      <small>
+        0 = unbegrenzt. Sobald die Anzahl ueberschritten wird, loescht der
+        Service nach jedem Upload die aeltesten Bilder dieser Webcam an
+        diesem Speicherziel automatisch. Greift nicht fuer Amazon-Photos-Ziele.
+      </small>
+    </label>
+  </fieldset>
+  {% else %}
+    <input type="hidden" name="retention_per_cam" value="0">
+  {% endif %}
+
+  <div class="form-actions">
+    <button class="btn primary" type="submit" name="action" value="save">Speichern</button>
+    <button class="btn ghost" type="submit" name="action" value="save_skip_test">
+      Speichern ohne Test
+    </button>
+    <a class="btn ghost" href="/storage">Abbrechen</a>
+  </div>
+  <small class="muted">
+    „Speichern" testet die Verbindung sofort; bei Fehler wird nicht gespeichert.
+    „Speichern ohne Test" speichert auch unerreichbare Targets (z.B. wenn das NAS gerade aus ist).
+  </small>
+</form>
+
+<!-- Filesystem-Browser-Modal -->
+<div id="fs-browser" class="fs-browser" style="display:none" onclick="if(event.target===this) closeFsBrowser()">
+  <div class="fs-browser-content" onclick="event.stopPropagation()">
+    <div class="fs-browser-head">
+      <strong>Verzeichnis wählen</strong>
+      <button type="button" class="btn ghost small" onclick="closeFsBrowser()">✕</button>
+    </div>
+    <div class="fs-browser-bar">
+      <button type="button" class="btn small ghost" id="fs-up" onclick="fsUp()" title="Übergeordnetes Verzeichnis">⬆</button>
+      <input type="text" id="fs-path" placeholder="/" onkeydown="if(event.key==='Enter'){event.preventDefault();fsLoad(this.value);}">
+      <button type="button" class="btn small ghost" onclick="fsLoad(document.getElementById('fs-path').value)">Laden</button>
+      <button type="button" class="btn small ghost" onclick="fsMkdir()" title="Neuen Ordner anlegen">+ Ordner</button>
+    </div>
+    <div id="fs-status" class="fs-status"></div>
+    <div id="fs-entries" class="fs-entries">
+      <div class="fs-empty">Lädt …</div>
+    </div>
+    <div class="fs-browser-foot">
+      <button type="button" class="btn primary" onclick="fsApply()">Diesen Pfad übernehmen</button>
+      <button type="button" class="btn ghost" onclick="closeFsBrowser()">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var _fsCurrentPath = "/";
+
+function openFsBrowser() {
+  document.getElementById('fs-browser').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  var start = (document.getElementById('cfg-base-path').value || "/").trim() || "/";
+  fsLoad(start);
+}
+function closeFsBrowser() {
+  document.getElementById('fs-browser').style.display = 'none';
+  document.body.style.overflow = '';
+}
+function fsLoad(path) {
+  var url = '/api/fs/browse?path=' + encodeURIComponent(path || '/');
+  document.getElementById('fs-status').textContent = '';
+  document.getElementById('fs-entries').innerHTML = '<div class="fs-empty">Lädt …</div>';
+  fetch(url, { credentials: 'same-origin' })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j.ok) {
+        document.getElementById('fs-status').innerHTML = '<span class="warn">Fehler: ' + (j.error || 'unbekannt') + '</span>';
+        document.getElementById('fs-entries').innerHTML = '';
+        return;
+      }
+      _fsCurrentPath = j.path;
+      document.getElementById('fs-path').value = j.path;
+      var msgs = [];
+      if (!j.exists) msgs.push('<span class="warn">Pfad existiert nicht</span>');
+      else if (!j.is_dir) msgs.push('<span class="warn">Pfad ist kein Verzeichnis</span>');
+      else if (!j.writable) msgs.push('<span class="warn">⚠ nicht schreibbar (für Service-User)</span>');
+      else msgs.push('<span class="ok-text">✓ schreibbar</span>');
+      if (j.error) msgs.push('<span class="warn">' + j.error + '</span>');
+      document.getElementById('fs-status').innerHTML = msgs.join(' · ');
+      var html = '';
+      if (j.entries && j.entries.length) {
+        j.entries.forEach(function(e){
+          html += '<div class="fs-entry" onclick="fsLoad(\'' + e.full_path.replace(/'/g, "\\'") + '\')">📁 ' + e.name + '</div>';
+        });
+      } else if (j.exists && j.is_dir) {
+        html = '<div class="fs-empty">Keine Unterverzeichnisse.</div>';
+      } else {
+        html = '<div class="fs-empty">Pfad nicht erreichbar.</div>';
+      }
+      document.getElementById('fs-entries').innerHTML = html;
+      document.getElementById('fs-up').disabled = !j.parent;
+    })
+    .catch(function(e){
+      document.getElementById('fs-status').innerHTML = '<span class="warn">Netzwerk-Fehler: ' + e + '</span>';
+      document.getElementById('fs-entries').innerHTML = '';
+    });
+}
+function fsUp() {
+  var p = _fsCurrentPath || "/";
+  var idx = p.lastIndexOf('/');
+  var parent = idx > 0 ? p.substring(0, idx) : '/';
+  fsLoad(parent);
+}
+function fsApply() {
+  var v = document.getElementById('fs-path').value;
+  document.getElementById('cfg-base-path').value = v;
+  closeFsBrowser();
+}
+function fsMkdir() {
+  var base = _fsCurrentPath || '/';
+  var name = window.prompt('Name des neuen Verzeichnisses (relativ zu ' + base + '):', '');
+  if (!name) return;
+  name = name.trim();
+  if (!name) return;
+  var fullPath = base.replace(/\/+$/, '') + '/' + name;
+  fetch('/api/fs/mkdir', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: fullPath })
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (j.ok) {
+        fsLoad(j.path);
+      } else {
+        alert('Anlegen fehlgeschlagen: ' + (j.error || 'unbekannt'));
+      }
+    })
+    .catch(function(e){ alert('Netzwerk-Fehler: ' + e); });
+}
+</script>
+
+{% endblock %}

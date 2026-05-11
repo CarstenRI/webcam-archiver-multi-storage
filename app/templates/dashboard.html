@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – Webcam-Uploader{% endblock %}
+{% block content %}
+
+{# Kompakte Storage-Status-Leiste: alle aktiven Ziele auf einen Blick #}
+<div class="storage-status-bar" role="status">
+  {% if storage_status %}
+    {% for st in storage_status %}
+      {% if st.type == "amazon" %}
+        {% set href = "/settings" %}
+      {% else %}
+        {% set href = "/storage" %}
+      {% endif %}
+      <a class="storage-chip {% if st.ok %}ok{% else %}{% if 'abgelaufen' in st.msg or 'expired' in st.msg %}err{% else %}warn{% endif %}{% endif %}"
+         href="{{ href }}"
+         title="{{ st.name }} — {{ st.msg }}">
+        <span class="status-dot"></span>
+        <span class="chip-type">{{ st.type_label }}</span>
+        <span class="chip-name">{{ st.name }}</span>
+        {% if not st.ok %}
+        <span class="chip-msg">— {{ st.msg|truncate(60, true, '…') }}</span>
+        {% endif %}
+      </a>
+    {% endfor %}
+  {% else %}
+    <a class="storage-chip warn" href="/storage" title="Noch kein Speicherziel konfiguriert">
+      <span class="status-dot"></span>
+      <span class="chip-type">Speicherziele</span>
+      <span class="chip-msg">— noch keins konfiguriert</span>
+    </a>
+  {% endif %}
+</div>
+
+<section class="stats">
+  <div class="stat success"><span class="num">{{ stats.ok }}</span> Erfolge (gesamt)</div>
+  <div class="stat dup"><span class="num">{{ stats.duplicate }}</span> Duplikate (gesamt)</div>
+  <div class="stat err"><span class="num">{{ stats.error }}</span> Fehler (gesamt)</div>
+  <div class="stat total"><span class="num">{{ stats.activity_24h }}</span> Aktivität (24h)</div>
+</section>
+
+<section>
+  <div class="section-head">
+    <h2>Webcams</h2>
+    <div style="display:flex;gap:8px">
+      <button id="detail-toggle" class="btn ghost" type="button">Details einblenden</button>
+      <a class="btn" href="/cams/new">+ Neue Webcam</a>
+    </div>
+  </div>
+
+  {% if not cams %}
+    <p class="empty">Noch keine Webcams angelegt. <a href="/cams/new">Jetzt eine anlegen.</a></p>
+  {% else %}
+  <div class="grid cam-grid" id="cam-grid">
+    {% for cam in cams %}
+    <div class="card cam-card" data-cam-id="{{ cam.id }}">
+      <span class="cam-drag-handle" draggable="true" title="Zum Umsortieren ziehen" aria-label="Karte ziehen, um Reihenfolge zu ändern">⋮⋮</span>
+      <button type="button" class="preview js-open-lightbox"
+              data-cam-id="{{ cam.id }}"
+              data-cam-name="{{ cam.name }}"
+              data-cam-time="{{ cam.last_fetch_at | localfmt('%d.%m.%Y %H:%M:%S') if cam.last_fetch_at else '' }}"
+              title="Bild groß anzeigen">
+        <img src="/preview/cam/{{ cam.id }}?ts={{ cam.last_fetch_at.isoformat() if cam.last_fetch_at else '0' }}"
+             alt="Vorschau {{ cam.name }}"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <div class="no-preview" style="display:none">Noch keine Vorschau</div>
+        <span class="zoom-hint" aria-hidden="true">+</span>
+      </button>
+      <div class="cam-meta">
+        <h3>
+          {{ cam.name }}
+          {% if cam.enabled %}<span class="pill on">aktiv</span>{% else %}<span class="pill off">aus</span>{% endif %}
+        </h3>
+        <p class="muted">
+          {{ cam.album.name if cam.album else "(Kein Album)" }} ·
+          alle {{ cam.interval_minutes }} min ·
+          {% if cam.use_solar %}☀ Sunrise/Sunset{% else %}{{ cam.time_start or "00:00" }}–{{ cam.time_end or "23:59" }}{% endif %}
+        </p>
+        <p class="status status-{{ cam.last_status or 'unknown' }}">
+          {% if cam.last_status %}{{ cam.last_status }}{% else %}noch kein Lauf{% endif %}
+          {% if cam.last_fetch_at %}<small> · {{ cam.last_fetch_at | localfmt('%d.%m. %H:%M') }} <span class="rel-time">({{ cam.last_fetch_at | rel }})</span></small>{% endif %}
+        </p>
+        <p class="cam-uploads"><strong>{{ cam_upload_counts.get(cam.id, 0) }}</strong> Uploads gesamt</p>
+        {% if cam.storage_targets %}
+        <p class="cam-targets">
+          {% for t in cam.storage_targets %}{% if t.enabled %}<span class="pill">{{ t.type }}</span>{% endif %}{% endfor %}
+        </p>
+        {% endif %}
+        <div class="actions">
+          <form method="post" action="/cams/{{ cam.id }}/run" style="display:inline">
+            <button class="btn small" type="submit">Jetzt fetchen</button>
+          </form>
+          <button class="btn small ghost" onclick="testCam({{ cam.id }})">Test</button>
+          <a class="btn small ghost" href="/cams/{{ cam.id }}/edit">Bearbeiten</a>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Letzte Aktivitäten</h2>
+  <div class="table-wrap"><table class="logs">
+    <thead>
+      <tr><th>Zeit</th><th>Cam</th><th>Status</th><th>Bytes</th><th>Meldung</th></tr>
+    </thead>
+    <tbody>
+      {% for f in recent %}
+      <tr class="row-{{ f.status }}">
+        <td>{{ f.started_at | localfmt('%d.%m. %H:%M:%S') }}</td>
+        <td>{{ f.cam.name if f.cam else '?' }}</td>
+        <td><span class="pill status-{{ f.status }}">{{ f.status }}</span></td>
+        <td>{{ "{:,}".format(f.bytes).replace(",", ".") if f.bytes else "" }}</td>
+        <td class="msg">{{ f.message or "" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">Noch keine Aktivität.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  <p><a href="/logs">Alle Logs ansehen →</a></p>
+</section>
+
+<!-- Lightbox -->
+<div id="lightbox" class="lightbox" style="display:none">
+  <div class="lightbox-content">
+    <button type="button" class="lightbox-close" id="lightbox-close" title="Schließen">×</button>
+    <img id="lightbox-img" src="" alt="">
+    <div class="lightbox-caption">
+      <span id="lightbox-name"></span>
+      <small id="lightbox-time"></small>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var lightbox = document.getElementById('lightbox');
+  var lightboxImg = document.getElementById('lightbox-img');
+  var lightboxName = document.getElementById('lightbox-name');
+  var lightboxTime = document.getElementById('lightbox-time');
+  var lightboxClose = document.getElementById('lightbox-close');
+
+  function openLightbox(btn) {
+    if (!lightbox || !lightboxImg) return;
+    var camId = btn.getAttribute('data-cam-id');
+    var name = btn.getAttribute('data-cam-name') || '';
+    var time = btn.getAttribute('data-cam-time') || '';
+    lightboxImg.src = '/preview/cam/' + camId + '/full?ts=' + Date.now();
+    lightboxName.textContent = name;
+    lightboxTime.textContent = time ? '· ' + time : '';
+    lightbox.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+  }
+  function closeLightbox() {
+    if (!lightbox) return;
+    lightbox.style.display = 'none';
+    lightboxImg.src = '';
+    document.body.style.overflow = '';
+  }
+
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.js-open-lightbox');
+    if (btn) {
+      e.preventDefault();
+      openLightbox(btn);
+      return;
+    }
+    if (lightbox && lightbox.style.display === 'flex' && lightbox.contains(e.target)) {
+      closeLightbox();
+    }
+  });
+  if (lightboxClose) {
+    lightboxClose.addEventListener('click', function(e) {
+      e.preventDefault();
+      closeLightbox();
+    });
+  }
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeLightbox();
+  });
+
+  // --- Compact/Details-Toggle ---
+  var grid = document.getElementById('cam-grid');
+  var toggleBtn = document.getElementById('detail-toggle');
+  function applyDetailMode() {
+    var compact = '0';
+    try { compact = localStorage.getItem('cam-compact') || '0'; } catch (_) {}
+    if (!grid || !toggleBtn) return;
+    if (compact === '1') {
+      grid.classList.add('compact');
+      toggleBtn.textContent = 'Details einblenden';
+    } else {
+      grid.classList.remove('compact');
+      toggleBtn.textContent = 'Details ausblenden';
+    }
+  }
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', function() {
+      var compact = '0';
+      try { compact = localStorage.getItem('cam-compact') || '0'; } catch (_) {}
+      try { localStorage.setItem('cam-compact', compact === '1' ? '0' : '1'); } catch (_) {}
+      applyDetailMode();
+    });
+  }
+  applyDetailMode();
+
+  // ============ Drag&Drop fuer Cam-Cards ============
+  // Nur das .cam-drag-handle-Element ist draggable, daher koennen
+  // Klicks/Selektionen auf der Karte normal funktionieren.
+  if (grid) {
+    var dragCard = null;
+
+    function clearOver() {
+      Array.prototype.forEach.call(
+        grid.querySelectorAll('.drag-over-left, .drag-over-right'),
+        function(el){ el.classList.remove('drag-over-left'); el.classList.remove('drag-over-right'); }
+      );
+    }
+
+    grid.addEventListener('dragstart', function(e) {
+      var handle = e.target.closest('.cam-drag-handle');
+      if (!handle) { return; }
+      var card = handle.closest('.cam-card');
+      if (!card) return;
+      dragCard = card;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', card.dataset.camId); } catch(_){}
+    });
+
+    grid.addEventListener('dragend', function() {
+      if (dragCard) dragCard.classList.remove('dragging');
+      dragCard = null;
+      clearOver();
+    });
+
+    grid.addEventListener('dragover', function(e) {
+      if (!dragCard) return;
+      var card = e.target.closest('.cam-card');
+      if (!card || card === dragCard) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      var rect = card.getBoundingClientRect();
+      var midX = rect.left + rect.width / 2;
+      clearOver();
+      if (e.clientX < midX) card.classList.add('drag-over-left');
+      else card.classList.add('drag-over-right');
+    });
+
+    grid.addEventListener('dragleave', function(e) {
+      var card = e.target.closest('.cam-card');
+      if (card) {
+        card.classList.remove('drag-over-left');
+        card.classList.remove('drag-over-right');
+      }
+    });
+
+    grid.addEventListener('drop', function(e) {
+      e.preventDefault();
+      var target = e.target.closest('.cam-card');
+      if (!target || !dragCard || target === dragCard) { clearOver(); return; }
+      var rect = target.getBoundingClientRect();
+      var before = e.clientX < (rect.left + rect.width / 2);
+      if (before) grid.insertBefore(dragCard, target);
+      else grid.insertBefore(dragCard, target.nextSibling);
+      clearOver();
+      saveCardOrder();
+    });
+
+    function saveCardOrder() {
+      var ids = Array.prototype.map.call(
+        grid.querySelectorAll('.cam-card'),
+        function(c){ return parseInt(c.dataset.camId, 10); }
+      ).filter(function(n){ return !isNaN(n); });
+      fetch('/api/cams/reorder', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: ids })
+      }).then(function(r){ return r.json(); })
+        .then(function(j){
+          if (!j.ok) {
+            alert('Speichern fehlgeschlagen: ' + (j.error || 'unbekannt'));
+            location.reload();
+          }
+        })
+        .catch(function(err){
+          alert('Netzwerk-Fehler: ' + err);
+          location.reload();
+        });
+    }
+  }
+})();
+</script>
+
+{% endblock %}
