@@ -32,6 +32,7 @@ apt-get update -qq
 apt-get install -y --no-install-recommends \
   python3 python3-venv python3-dev \
   build-essential libjpeg-dev zlib1g-dev libwebp-dev \
+  ffmpeg \
   ca-certificates curl
 
 # 2) System-User

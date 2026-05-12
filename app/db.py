@@ -83,6 +83,11 @@ class Cam(Base):
     last_status: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     last_preview_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     duplicate_hash_threshold: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # v0.10.0: bevorzugtes Storage-Target fuer Timelapse-Quelle. Default None = erstes
+    # aktives local-Target dieser Cam. Nullable, weil viele Cams kein Timelapse nutzen.
+    timelapse_source_target_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("storage_targets.id", ondelete="SET NULL"), nullable=True,
+    )
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     # Persistente Lifetime-Counter (unabhaengig von der fetches-Tabelle).
     # Werden inkrementiert beim Erstellen eines Fetch-Eintrags und bleiben
@@ -171,6 +176,33 @@ class TargetUpload(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Wenn nicht None: Eintrag wurde durch Retention-Policy geloescht.
     pruned_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class TimelapseJob(Base):
+    """v0.10.0: Ein Render-Auftrag fuer ein Timelapse-Video."""
+    __tablename__ = "timelapse_jobs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cam_id: Mapped[int] = mapped_column(
+        ForeignKey("cams.id", ondelete="CASCADE")
+    )
+    cam: Mapped["Cam"] = relationship()
+    source_target_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("storage_targets.id", ondelete="SET NULL"), nullable=True,
+    )
+    # JSON-Params: {from, to, fps, resolution, weekdays, time_start, time_end,
+    #               best_of_day, label, codec, frame_count_estimate}
+    params_json: Mapped[str] = mapped_column(Text, default="{}")
+    # status: pending | running | done | error | cancelled
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    progress_pct: Mapped[int] = mapped_column(Integer, default=0)
+    frame_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    output_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration_s: Mapped[Optional[float]] = mapped_column(nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 _engine = create_engine(
@@ -321,6 +353,40 @@ def _migrate_seed_admin_user():
         ), {"u": username, "h": password_hash, "now": datetime.utcnow()})
 
 
+def _migrate_add_timelapse():
+    """v0.10.0: timelapse_source_target_id auf cams + timelapse_jobs-Tabelle."""
+    with _engine.begin() as conn:
+        cols = conn.execute(text("PRAGMA table_info(cams)")).fetchall()
+        col_names = {c[1] for c in cols}
+        if "timelapse_source_target_id" not in col_names:
+            conn.execute(text(
+                "ALTER TABLE cams ADD COLUMN timelapse_source_target_id INTEGER"
+            ))
+        # CREATE TABLE IF NOT EXISTS — idempotent, kein ALTER noetig
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS timelapse_jobs (\n"
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+            "  cam_id INTEGER NOT NULL REFERENCES cams(id) ON DELETE CASCADE,\n"
+            "  source_target_id INTEGER REFERENCES storage_targets(id) ON DELETE SET NULL,\n"
+            "  params_json TEXT NOT NULL DEFAULT '{}',\n"
+            "  status VARCHAR(20) NOT NULL DEFAULT 'pending',\n"
+            "  progress_pct INTEGER NOT NULL DEFAULT 0,\n"
+            "  frame_count INTEGER,\n"
+            "  output_path VARCHAR(500),\n"
+            "  bytes INTEGER,\n"
+            "  duration_s REAL,\n"
+            "  error_message TEXT,\n"
+            "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,\n"
+            "  started_at DATETIME,\n"
+            "  finished_at DATETIME\n"
+            ")"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_timelapse_jobs_cam_status "
+            "ON timelapse_jobs (cam_id, status)"
+        ))
+
+
 def init_db() -> None:
     settings.ensure_dirs()
     Base.metadata.create_all(_engine)
@@ -328,6 +394,7 @@ def init_db() -> None:
     _migrate_add_dup_threshold()
     _migrate_add_retention()
     _migrate_add_cam_counters()
+    _migrate_add_timelapse()
     _migrate_seed_amazon_target()
     _migrate_seed_admin_user()
 

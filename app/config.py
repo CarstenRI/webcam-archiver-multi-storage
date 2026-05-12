@@ -36,6 +36,19 @@ class Settings(BaseSettings):
     # Scheduler
     max_concurrent_fetches: int = 5
 
+    # Timelapse (v0.10.0)
+    # Globaler Cache-Cap fuer gerenderte Videos unter data_dir/timelapse/.
+    # Wenn ueberschritten, werden aelteste Renderings beim taeglichen Cleanup geloescht.
+    timelapse_cache_max_gb: int = 5
+    # Max Anzahl persistent gespeicherter Renderings pro Cam.
+    timelapse_retention_per_cam: int = 10
+    # Pruefintervall des Worker-Polls in Sekunden (klein halten fuer UX).
+    timelapse_worker_interval_s: int = 5
+
+    @property
+    def timelapse_dir(self) -> Path:
+        return self.data_dir / "timelapse"
+
     @property
     def db_path(self) -> Path:
         return self.data_dir / "webcam-uploader.sqlite3"
@@ -47,6 +60,8 @@ class Settings(BaseSettings):
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        self.timelapse_dir.mkdir(parents=True, exist_ok=True)
+        (self.timelapse_dir / "tmp").mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

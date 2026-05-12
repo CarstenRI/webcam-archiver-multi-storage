@@ -5,6 +5,30 @@ Alle nennenswerten Änderungen an diesem Projekt sind hier dokumentiert.
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.10.0-dev] – 2026-05-12 (in progress)
+
+### Foundation laid (this commit)
+- **Design-Dokument** `docs/timelapse-design.md` mit kompletter Architektur:
+  Tab-basierte Cam-Detail-Page, Browser-Diashow + ffmpeg-MP4-Export,
+  Best-of-Day-Modus, Retention/Cache-Cap, DB-Schema, Edge-Cases.
+- **Neue DB-Tabelle `timelapse_jobs`** plus neue Cam-Spalte
+  `timelapse_source_target_id`. Idempotente Migration
+  `_migrate_add_timelapse()` analog zu den bestehenden v0.7.x/v0.8.x Migrationen.
+- **Neue Settings-Felder** `WU_TIMELAPSE_CACHE_MAX_GB` (default 5),
+  `WU_TIMELAPSE_RETENTION_PER_CAM` (default 10),
+  `WU_TIMELAPSE_WORKER_INTERVAL_S` (default 5). Neue Property
+  `settings.timelapse_dir = /var/lib/webcam-uploader/timelapse/`,
+  wird via `ensure_dirs()` beim Startup angelegt.
+- **install.sh** installiert ab v0.10.0 zusaetzlich `ffmpeg`
+  (~20 MB extra auf Debian 12 / Ubuntu 22+).
+
+### Coming next (later commits in the v0.10.0 release)
+- Module `app/timelapse.py` mit Frame-Listing, ffmpeg-Render und Job-Worker.
+- Cam-Detail-Page mit Tabs (Vorschau, Timelapse, Logs, Bearbeiten).
+- Browser-Diashow + Render-Form mit Status-Polling.
+- Best-of-Day-Helligkeitsfilter.
+- Settings-Sub-Sektion "Timelapse-Cache" mit Live-Auslastungsanzeige.
+
 ## [0.9.3] – 2026-05-11
 
 ### Added
@@ -212,4 +236,164 @@ und das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   - **JSON-Import**: alternativ kann ein komplettes JSON-Blob eingefuegt werden.
   - **Console-Snippet**: kurzes JavaScript-Snippet zum Auslesen nicht-HttpOnly-Cookies aus der Browser-Console.
   - **Erweitert-Bereich**: Legacy-JSON-Textarea fuer Power-User bleibt verfuegbar (ueberschreibt alle Einzelfelder).
-- Backend (`set
+- Backend (`settings_save`): merget Einzelfelder mit bestehenden Cookies; leere Felder lassen alten Wert unveraendert (Teil-Updates moeglich).
+
+### Changed
+- `/settings/save`-Route verlangt jetzt explizit `require_admin` (vorher uneindeutig).
+
+## [0.8.3] – 2026-05-11
+
+### Fixed
+- **Cookies-UX-Bug**: Beim Speichern der Amazon-Cookies wurden bestehende Cookies auch dann ueberschrieben, wenn das Cookie-Textarea leer war. Damit hat ein "Speichern" ohne Cookie-Eingabe die alten Cookies geloescht – obwohl der Hilfetext sagt "Leer lassen, um nichts zu aendern". Backend wurde an den Hilfetext angepasst.
+
+### Added
+- **401-Skip-Mode** im Amazon-Backend: Wenn Amazon mit `401 Cookies expired` antwortet, werden Amazon-Uploads fuer **15 Minuten** komplett uebersprungen statt fuer jede Cam dreimal mit exponentialem Backoff zu retryen. Spart pro Cam ~40 Sekunden Wartezeit; Service bleibt responsiv auch waehrend abgelaufener Cookies.
+- **Auffaelliger Fehler-Banner** auf dem Dashboard bei abgelaufenen Cookies (rot statt orange), mit direktem Link zu `/settings`.
+- Skip-Mode endet automatisch nach 15 Min, oder sofort bei `reset_client()` (also wenn neue Cookies via UI gespeichert werden).
+
+## [0.8.2] – 2026-05-11
+
+### Added
+- **Logout-Button** in der Top-Navigation („⎋ Abmelden"). Da HTTPBasic-Auth keine echte Server-Session hat, wird der Browser-Cache via JS-Trick invalidiert (XHR mit absichtlich invaliden Credentials zu einer geschuetzten Route). Funktioniert in allen modernen Browsern; bei hartnaeckigen Caches gibt die Logout-Seite den Hinweis, das Fenster zu schliessen oder ein Inkognito-Fenster zu nutzen.
+- Neue oeffentliche Route `GET /logout` mit eigenem Template `logout.html`.
+
+## [0.8.1] – 2026-05-11
+
+### Fixed
+- **Service-Crash beim ersten Start auf Debian-Server**: `passlib.hash.bcrypt.hash(...)` warf `ValueError: password cannot be longer than 72 bytes`. Bekannte Inkompatibilitaet zwischen `passlib 1.7.x` und `bcrypt >= 4.0` — passlib macht intern einen Self-Test mit zu langem Passwort, der in bcrypt 4.x crasht statt zu truncaten.
+- Fix: Neuer Helper `app/security.py` mit `hash_password()` / `verify_password()` direkt via `bcrypt`-Library, ohne passlib-Wrapper. Truncate auf 72 Bytes proaktiv im Helper. `db.py`, `auth.py`, `main.py` umgestellt.
+
+## [0.8.0] – 2026-05-11
+
+### Added
+- **Multi-User-Authentifizierung mit Rollen**: Neue `users`-Tabelle mit bcrypt-Hashes. Rollen `admin` (alles) und `viewer` (nur lesen). Bei erstem Start wird der `.env`-User automatisch als Admin uebernommen.
+- `.env` bleibt als **Notfall-Fallback** aktiv – falls die DB-Tabelle z.B. nach einem fehlgeschlagenen Restore leer ist, kommt man trotzdem rein.
+- Settings-Seite mit **User-Verwaltung**: Anlegen, Passwort setzen, Rolle aendern (Dropdown), Loeschen. Schutz gegen Aussperren – letzter Admin kann nicht degradiert oder geloescht werden.
+- Jeder eingeloggte User (auch Viewer) kann sein **eigenes Passwort** aendern.
+- Neue **System-Status-Box**: Anzahl Webcams/Speicherziele/Fetches/User, Service-Uptime, letzter Fetch, DB-Groesse, freier Plattenplatz unter `data_dir`.
+- **Log-Retention**: in den Settings konfigurierbar (Tage). Daily-Cleanup-Job loescht alte `fetches` (CASCADE auch `target_uploads`).
+- **Backup**: `GET /settings/backup` liefert die SQLite-DB als Download mit Zeitstempel-Dateinamen.
+- **Restore**: `POST /settings/restore` akzeptiert SQLite-Datei, validiert Magic-Bytes, sichert die aktuelle DB als `.prerestore`, ersetzt. Service-Restart erforderlich (Hinweis in UI).
+
+### Changed
+- `auth.py` komplett umgebaut: `current_user` liefert User-Objekt, `require_auth` / `require_admin` als FastAPI-Dependencies.
+- Alle Schreib-Operationen (`POST`-Routes) verlangen Admin-Rolle; Lese-Operationen reichen `require_auth`.
+- Settings-Seite zeigt fuer Viewer eingeschraenkte UI (User-Verwaltung, Cookie-Bearbeitung, Retention, Backup nur fuer Admins sichtbar).
+
+## [0.7.8] – 2026-05-10
+
+### Added
+- **Drag&Drop-Sortierung** auf der Seite „Webcams": neben den ▲/▼-Buttons jetzt ein ⋮⋮-Griff in der Reihenfolge-Spalte. Per Maus eine Zeile greifen, an die gewuenschte Position ziehen, fertig. Visuelle Indikatoren beim Hover (oben/unten der Ziel-Zeile), optimistic UI (DOM verschiebt sofort), Server-Speicherung im Hintergrund.
+- Neue API `POST /api/cams/reorder` mit `{ids: [...]}` – setzt sort_order auf 1..N in der gelieferten Reihenfolge.
+
+## [0.7.7] – 2026-05-10
+
+### Changed
+- Webcams-Liste: Wochentage-Spalte ist jetzt einzeilig. Die sieben Tag-Buchstaben (Mo Di Mi Do Fr Sa So) werden als kompakte Mini-Pillen nebeneinander dargestellt — aktive Tage gruen, inaktive dezent grau. Tabellen-Zeile wird dadurch etwa halb so hoch, alle Infos bleiben auf einen Blick erkennbar.
+
+## [0.7.6] – 2026-05-10
+
+### Fixed
+- Sortier-Buttons (▲/▼) auf den Seiten „Webcams" und „Alben" funktionierten nicht, wenn mehrere Eintraege denselben `sort_order` hatten (typisch: alle neuen Cams haben default-Wert 0). Die alte Logik suchte mit `WHERE sort_order < X` nach dem Vorgaenger und fand nichts, wenn alle Werte gleich waren. Fix: vor jedem Swap werden alle Eintraege in der aktuellen Display-Reihenfolge (sort_order, name) auf 1..N normalisiert, dann ganz normal mit dem Vorgaenger / Nachfolger getauscht. Robust gegen alle Zustaende.
+
+## [0.7.5] – 2026-05-10
+
+### Changed
+- Alle in der UI angezeigten Zeiten (Dashboard, Logs, Storage-Targets, Lightbox-Caption) werden jetzt in **lokaler Serverzeit** dargestellt statt UTC. Intern bleibt alles UTC (`datetime.utcnow()`), die Konvertierung passiert via neuem Jinja-Filter `localfmt(fmt)` (`app/template_filters.py`), der `datetime.astimezone()` mit System-Timezone nutzt. Auf einem Debian-Server mit `Europe/Berlin` zeigt also „21:35" statt „19:35".
+
+## [0.7.4] – 2026-05-10
+
+### Added
+- **Retention-Policy pro Speicherziel und Webcam**: neues Feld „Max. Anzahl Bilder pro Webcam" (0 = unbegrenzt). Nach jedem erfolgreichen Upload werden ueberzaehlige aeltere Bilder automatisch geloescht.
+- Backend-Interface `StorageBackend.delete(remote_ref)`. Implementiert in local/sftp/s3 (Amazon: no-op, hat keine sinnvolle Lösch-API).
+- Local und SFTP raeumen leere Eltern-Verzeichnisse beim Loeschen mit auf.
+- Neue DB-Spalten `storage_targets.retention_per_cam`, `target_uploads.cam_id` (denormalisiert fuer Retention-Query) und `target_uploads.pruned_at`. Idempotente Migration.
+
+### Changed
+- Scheduler ruft nach jedem erfolgreichen Upload `_prune_target_for_cam()` auf; das Pruning protokolliert die Anzahl geloeschter Eintraege ins Service-Log.
+
+## [0.7.3] – 2026-05-10
+
+### Added
+- **Filesystem-Browser fuer Local-Backend**: beim Anlegen eines Speicherziels vom Typ „Lokales Verzeichnis" gibt es im Feld „Basis-Verzeichnis" jetzt einen „📁 Durchsuchen"-Button. Modal zeigt Unterverzeichnisse, Up-Navigation, Schreibbar-Status, und kann via „+ Ordner" neue Verzeichnisse anlegen.
+- Neue API-Endpunkte `GET /api/fs/browse?path=...` (listet nur Verzeichnisse, keine Dateien) und `POST /api/fs/mkdir` – HTTPBasic-geschuetzt, nur fuer authentifizierte User.
+
+## [0.7.2] – 2026-05-10
+
+### Added
+- Relative Zeitangabe auf Dashboard-Karten: hinter "10.05. 19:23" steht jetzt zusaetzlich "(vor 12 Min.)" / "(vor 2:35 Std.)" – server-seitig via neuem Jinja-Filter `rel` (`app/template_filters.py`)
+
+### Fixed
+- CSS-Block fuer Compact-Modus (`Details ausblenden`) blendete die in v0.7.0 hinzugefuegten `.cam-targets`-Pills nicht aus – der Toggle hatte dadurch wenig sichtbaren Effekt und wirkte "kaputt". Selector um `.cam-targets` erweitert.
+- `style.css` wurde wegen Sync-Bug ebenfalls in v0.7.0/0.7.1 truncated geliefert; komplett neu via Bash-Heredoc geschrieben (inkl. `.pill.status-partial`, `.row-partial`, `.storage-target-list`).
+
+## [0.7.1] – 2026-05-10
+
+### Fixed
+- Hotfix für v0.7.0: `dashboard.html`, `base.html`, `cam_form.html`, `logs.html` waren beim Bundle-Build truncated (Sync-Bug zwischen Edit-Tool und Linux-Mount). Service-Crash beim Aufruf von `/dashboard` mit `jinja2.exceptions.TemplateSyntaxError: Unexpected end of template`. Templates neu via Bash-Heredoc geschrieben, Bundle neu gebaut.
+
+## [0.7.0] – 2026-05-10
+
+### Added
+- **Multi-Storage-Backend-System** – Bilder können parallel an mehrere Ziele hochgeladen werden (M:N Cam↔Target)
+- Neues Storage-Backend „Lokales Verzeichnis" (`local`) – schreibt Bilder auf das Filesystem des Servers
+- Neues Storage-Backend „SFTP/SSH" (`sftp`) mit `paramiko` – Passwort- **und** SSH-Key-Auth, rekursive Verzeichnis-Anlage, Known-Hosts-Strict-Mode optional
+- Neues Storage-Backend „S3-kompatibel" (`s3`) mit `boto3` – AWS, Backblaze B2, Cloudflare R2, MinIO, Wasabi, Hetzner Object Storage etc. via Custom-Endpoint
+- Pfad-Templates pro Storage-Target frei konfigurierbar (`{cam_slug}/{Y}-{m}-{d}/{H}-{M}-{S}{ext}` u.v.m.)
+- Neue UI-Seite „Speicherziele" (`/storage`) – Anlegen, Bearbeiten, Aktivieren/Deaktivieren, Verbindungs-Test, Löschen
+- Sofortiger Verbindungs-Test beim Speichern eines Storage-Targets; bei Fehler wird nicht gespeichert. Optionaler „Speichern ohne Test"-Button
+- Cam-Formular: Multi-Select „Speicherziele" zur parallelen Zuweisung
+- Dashboard zeigt pro Cam die zugewiesenen Target-Typen als Pills
+- Logs-Seite zeigt pro Fetch die Ergebnisse jedes einzelnen Storage-Targets
+- Neuer Fetch-Status `partial` – wenn ≥1 Ziel erfolgreich, ≥1 Ziel fehlgeschlagen
+- DB-Auto-Migration: bestehende Cams werden einem Default-Target „Amazon Photos" zugewiesen, sodass das bisherige Upload-Verhalten nahtlos weiterläuft
+
+### Changed
+- `scheduler.run_cam()` iteriert über alle aktiven Storage-Targets einer Cam, sammelt Ergebnisse, aggregiert zu Fetch-Status (`success` / `partial` / `upload_error`)
+- Dashboard-Statistiken zählen `partial` zusätzlich zu `success` als „Upload"
+- Cams ohne explizit zugewiesene Targets fallen automatisch auf das erste aktive `amazon`-Target zurück (Sicherheits-Net nach Migration)
+
+### Fixed
+- Logs-Filter um neue Status-Werte `partial` erweitert
+
+## [0.6.0] – 2026-05-10
+
+### Added
+- Pro-Cam einstellbare Duplicate-Hash-Schwelle (überschreibt globalen `WU_DUPLICATE_HASH_THRESHOLD`)
+- Sortier-Buttons (▲/▼) für Webcams – Reihenfolge wirkt sich auf Dashboard und Cams-Liste aus
+- Sortier-Buttons (▲/▼) für Alben – Reihenfolge wirkt nur in der Alben-Übersicht
+- Toggle „Details einblenden / ausblenden" auf dem Dashboard, persistiert über `localStorage`
+- Self-Heal-Job: alle 30 Min läuft `sync_jobs()` automatisch, holt verlorene Cam-Jobs zurück
+- Map-Picker auf der Cam-Bearbeiten-Seite (Leaflet + OpenStreetMap, mit Ortssuche via Nominatim)
+- Lightbox-Vollbildansicht beim Klick auf das Webcam-Vorschaubild im Dashboard
+- Pro-Cam-Upload-Counter unterhalb des Status auf jeder Dashboard-Karte
+- Vierte Stat-Karte „Uploads gesamt" auf dem Dashboard
+- Klickbarer „Webcam-Uploader"-Brand in der Topbar (führt zu `/dashboard`)
+- DB-Migrationen für `cams.sort_order`, `albums.sort_order`, `cams.duplicate_hash_threshold` (idempotent beim Service-Start)
+
+### Changed
+- Album-Zuordnung in Amazon Photos läuft jetzt direkt über die Drive-API mit lokalem ID-Caching, statt den Bulk-Sync der `amazon-photos`-Lib zu triggern
+- Albums-Liste verwendet auf der Übersicht `sort_order`, im Cam-Form-Dropdown weiterhin alphabetisch
+- Lightweight `AmazonPhotosLite`-Subklasse überschreibt `load_db`/`get_folders`/`build_tree` als No-Ops, um Init-Zeit von Minuten auf Sekunden zu drücken (relevant bei großen Foto-Bibliotheken)
+
+### Fixed
+- Service-Crash-Loop nach Service-Restart durch nicht synchronisierte Scheduler-Jobs (jetzt Self-Heal)
+- Indentation-/Truncation-Bugs durch konsequentes Schreiben großer Files via Bash-Heredoc
+
+## [0.5.0] – 2026-05-10
+
+### Added
+- Web-UI: Lightbox für vergrößerte Webcam-Vorschau
+- Dashboard zeigt zusätzlich Pro-Cam und globalen Upload-Counter
+- Klick auf Brand-Logo navigiert zum Dashboard
+- Album-Zuordnung pro Cam mit Auto-Anlage in Amazon Photos beim ersten Upload
+
+### Changed
+- `cam_save` übergibt `album_db_id` zusätzlich zum Namen an `upload_file()` für stabile ID-Auflösung
+
+## [0.4.0] – 2026-05-09
+
+### Added
+- Inoffizielle Lib `amazon-photos>=0.0.97` mit korrektem Cookie-Setup (statt v0.0.10)
+- Pro-Cam Geo-Koordinaten und Sunrise/Sunset-Fenster via `astral`
+- Settings-Seite zum Eintragen der Amazon-Photos-

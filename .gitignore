@@ -58,3 +58,6 @@ test_*.txt
 
 # Session compact notes (Claude-internal)
 compact-*.md
+
+# Release-Notes-Drafts (lokal, fuer GitHub-Release-Editor zum Reinkopieren)
+RELEASE_NOTES_v*.md
