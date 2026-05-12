@@ -22,8 +22,30 @@ und das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - **install.sh** installiert ab v0.10.0 zusaetzlich `ffmpeg`
   (~20 MB extra auf Debian 12 / Ubuntu 22+).
 
+- **Backend-Modul `app/timelapse.py`** (678 LOC):
+  - `list_frames()` — reine SQL-Query auf `target_uploads` JOIN `fetches` mit
+    Filter cam_id + source_target_id + status='success' + pruned_at IS NULL,
+    plus optionalen Wochentag-/Tageszeit-Filtern (Python-seitig).
+  - `pick_source_target()` — waehlt das Storage-Target aus, von dem gelesen
+    wird: cam.timelapse_source_target_id falls gesetzt, sonst erstes aktives
+    local-Target der Cam.
+  - `best_of_day_filter()` — Pillow-basierter Helligkeits-Filter, behaelt pro
+    Kalendertag das hellste Bild (100x100-Downscale, ImageStat.mean).
+  - `enqueue_job()` + `worker_tick()` + `_process_job()` — Job-Queue auf der
+    `timelapse_jobs`-Tabelle. Worker verarbeitet hoechstens einen pending Job
+    pro Tick, isoliert die Render-Zeit von der DB-Session.
+  - `ffmpeg_render()` — Symlink-basierte Sequenz, libx264/yuv420p, faststart,
+    drawtext-Overlay mit Cam-Name + Zeitraum-Label, progress-Parsing via
+    `-progress pipe:1`. Resolution-Presets: original / 1080p / 720p.
+  - `cleanup_cache()` — beidseitige Retention (Pro-Cam + Global-GB-Cap),
+    Daily-Job. Evicted Files: output_path -> NULL, DB-Row bleibt fuer UI.
+- **Scheduler-Integration** (`app/scheduler.py`):
+  - Neuer Job `__timelapse_worker__` triggert `worker_tick()` alle
+    `WU_TIMELAPSE_WORKER_INTERVAL_S` Sekunden (default 5s).
+  - Der Log-Retention-Daily-Job wurde in `_daily_cleanup()` zusammengefasst
+    und ruft jetzt auch `timelapse.cleanup_cache()` auf.
+
 ### Coming next (later commits in the v0.10.0 release)
-- Module `app/timelapse.py` mit Frame-Listing, ffmpeg-Render und Job-Worker.
 - Cam-Detail-Page mit Tabs (Vorschau, Timelapse, Logs, Bearbeiten).
 - Browser-Diashow + Render-Form mit Status-Polling.
 - Best-of-Day-Helligkeitsfilter.

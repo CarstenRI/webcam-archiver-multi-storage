@@ -77,13 +77,44 @@ def start() -> None:
         id="__self_heal_sync_jobs__",
         replace_existing=True,
     )
-    # Log-Retention: einmal taeglich aufraeumen
+    # Log-Retention + Timelapse-Cache-Cleanup: einmal taeglich
     sched.add_job(
-        cleanup_old_fetches,
+        _daily_cleanup,
         trigger=IntervalTrigger(hours=24),
-        id="__log_retention__",
+        id="__daily_cleanup__",
         replace_existing=True,
     )
+    # Timelapse-Worker: pollt pending Jobs alle paar Sekunden
+    sched.add_job(
+        _timelapse_worker_tick,
+        trigger=IntervalTrigger(
+            seconds=max(1, int(settings.timelapse_worker_interval_s)),
+        ),
+        id="__timelapse_worker__",
+        replace_existing=True,
+    )
+
+
+def _daily_cleanup() -> None:
+    """Sammelt alle taeglichen Cleanup-Schritte (v0.10.0)."""
+    try:
+        cleanup_old_fetches()
+    except Exception as e:  # noqa: BLE001
+        log.exception("cleanup_old_fetches failed: %s", e)
+    try:
+        from . import timelapse as _tl
+        _tl.cleanup_cache()
+    except Exception as e:  # noqa: BLE001
+        log.exception("timelapse.cleanup_cache failed: %s", e)
+
+
+def _timelapse_worker_tick() -> None:
+    """Worker-Tick-Wrapper: ruft timelapse.worker_tick() mit Schutz auf."""
+    try:
+        from . import timelapse as _tl
+        _tl.worker_tick()
+    except Exception as e:  # noqa: BLE001
+        log.exception("timelapse.worker_tick failed: %s", e)
 
 
 def shutdown() -> None:
