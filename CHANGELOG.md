@@ -5,6 +5,22 @@ Alle nennenswerten Änderungen an diesem Projekt sind hier dokumentiert.
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.10.1] – 2026-05-12
+
+### Changed
+- **Neues Logo + Favicon.** Das alte Kamera-Emoji im Header ist durch ein inline
+  SVG-Iris-Icon (Kamera-Blende, 6-Wedge-Design in den App-Blautoenen) ersetzt.
+  Gleicher Brand-Mark dient jetzt auch als SVG-Favicon
+  (`/static/favicon.svg`) — der Browser-Tab zeigt damit ein echtes App-Icon
+  statt des generischen Platzhalters. Skaliert sauber bis 16x16.
+- Die fruehere Gradient-Box mit Glow um das Logo ist entfallen — das neue
+  Logo steht naked und hat seine eigene Komposition.
+
+### Files
+- new `app/static/favicon.svg`
+- `app/templates/base.html` (inline-SVG-Logo, `<link rel=icon>`)
+- `app/static/style.css` (`.brand .logo` Stil reduziert)
+
 ## [0.10.0] – 2026-05-12
 
 ### Foundation laid (this commit)

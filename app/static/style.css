@@ -34,16 +34,18 @@ a:hover { text-decoration: underline; }
   transition: opacity 0.15s ease;
 }
 .brand .logo {
-  font-size: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #2b3a55 0%, #1e2738 100%);
-  border: 1px solid #2b3a55;
-  box-shadow: 0 0 14px rgba(45, 120, 255, 0.18), 0 1px 0 rgba(255,255,255,0.04) inset;
+  overflow: hidden;
+}
+.brand .logo svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 .brand .title {
   background: linear-gradient(90deg, #ffffff 0%, #bcd0ff 100%);
