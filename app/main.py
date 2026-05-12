@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -233,27 +233,9 @@ def cam_new_form(request: Request, _: str = Depends(require_auth)):
 
 
 @app.get("/cams/{cam_id}/edit")
-def cam_edit_form(cam_id: int, request: Request, _: str = Depends(require_auth)):
-    with SessionLocal() as s:
-        cam = (
-            s.query(Cam)
-            .options(joinedload(Cam.album), joinedload(Cam.storage_targets))
-            .filter(Cam.id == cam_id)
-            .first()
-        )
-        if cam is None:
-            raise HTTPException(404)
-        albums = s.query(Album).order_by(Album.name).all()
-        targets = s.query(StorageTarget).order_by(StorageTarget.sort_order, StorageTarget.name).all()
-        selected = {t.id for t in cam.storage_targets}
-        return templates.TemplateResponse(
-            "cam_form.html",
-            {
-                "request": request, "cam": cam, "albums": albums,
-                "storage_targets": targets,
-                "selected_target_ids": selected,
-            },
-        )
+def cam_edit_redirect(cam_id: int, _: str = Depends(require_auth)):
+    """v0.10.0: Edit ist jetzt ein Tab im Cam-Detail. 302 fuer Bookmarks."""
+    return RedirectResponse(url=f"/cams/{cam_id}#bearbeiten", status_code=302)
 
 
 @app.post("/cams/save")
@@ -393,6 +375,388 @@ def cam_test(cam_id: int, user: User = Depends(require_admin)):
             return {"ok": True, "bytes": len(data)}
         except FetchError as e:
             return {"ok": False, "error": str(e)}
+
+
+# ====================== Cam-Detail-Page (v0.10.0) ======================
+
+@app.get("/cams/{cam_id}")
+def cam_detail(
+    cam_id: int, request: Request, _: str = Depends(require_auth),
+):
+    """Tab-basierte Detail-Seite einer Cam.
+
+    Hosts: Vorschau / Timelapse / Logs / Bearbeiten.
+    Tab-Selektion erfolgt clientseitig via URL-Hash (#vorschau / #timelapse /
+    #logs / #bearbeiten); Default ist Vorschau.
+    """
+    from .timelapse import pick_source_target, FFMPEG_AVAILABLE
+    from .db import TimelapseJob
+    with SessionLocal() as s:
+        cam = (
+            s.query(Cam)
+            .options(joinedload(Cam.album), joinedload(Cam.storage_targets))
+            .filter(Cam.id == cam_id)
+            .first()
+        )
+        if cam is None:
+            raise HTTPException(404)
+        albums = s.query(Album).order_by(Album.name).all()
+        targets = (
+            s.query(StorageTarget)
+            .order_by(StorageTarget.sort_order, StorageTarget.name)
+            .all()
+        )
+        selected_target_ids = {t.id for t in cam.storage_targets}
+        # Local-Targets dieser Cam fuer den Source-Picker
+        local_targets = [
+            t for t in cam.storage_targets if t.enabled and t.type == "local"
+        ]
+        preferred = pick_source_target(s, cam)
+        # Frame-Bestand pro lokalem Target zaehlen
+        frame_stats = {}
+        for t in local_targets:
+            row = s.query(
+                sa_func.count(TargetUpload.id),
+                sa_func.min(Fetch.started_at),
+                sa_func.max(Fetch.started_at),
+            ).join(Fetch, TargetUpload.fetch_id == Fetch.id).filter(
+                TargetUpload.cam_id == cam_id,
+                TargetUpload.storage_target_id == t.id,
+                TargetUpload.status == "success",
+                TargetUpload.pruned_at.is_(None),
+                TargetUpload.remote_ref.isnot(None),
+            ).first()
+            count, first_ts, last_ts = row if row else (0, None, None)
+            frame_stats[t.id] = {
+                "count": count or 0,
+                "first_ts": first_ts,
+                "last_ts": last_ts,
+            }
+        # Letzte Fetches dieser Cam fuer Logs-Tab
+        recent_fetches = (
+            s.query(Fetch)
+            .options(joinedload(Fetch.target_uploads))
+            .filter(Fetch.cam_id == cam_id)
+            .order_by(Fetch.started_at.desc())
+            .limit(50)
+            .all()
+        )
+        # Bestehende Timelapse-Jobs (neueste zuerst)
+        jobs = (
+            s.query(TimelapseJob)
+            .filter(TimelapseJob.cam_id == cam_id)
+            .order_by(TimelapseJob.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        return templates.TemplateResponse(
+            "cam_detail.html",
+            {
+                "request": request,
+                "cam": cam,
+                "albums": albums,
+                "storage_targets": targets,
+                "selected_target_ids": selected_target_ids,
+                "local_targets": local_targets,
+                "preferred_target_id": preferred.id if preferred else None,
+                "frame_stats": frame_stats,
+                "recent_fetches": recent_fetches,
+                "timelapse_jobs": jobs,
+                "ffmpeg_available": FFMPEG_AVAILABLE,
+            },
+        )
+
+
+# ====================== Timelapse-API (v0.10.0) ======================
+
+@app.get("/api/cams/{cam_id}/timelapse/frames")
+def api_timelapse_frames(
+    cam_id: int,
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = None,
+    source_target_id: Optional[int] = None,
+    weekdays: Optional[str] = None,
+    time_start: Optional[str] = None,
+    time_end: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 1000,
+    _: str = Depends(require_auth),
+):
+    """JSON-Liste der Frames fuer den Player. Paginiert (default 1000/Seite).
+
+    Query-Params:
+      from, to: ISO-Timestamps
+      source_target_id: explizit ein Local-Target waehlen
+      weekdays: "1010111" (Mo..So)
+      time_start, time_end: "HH:MM"
+      page, page_size: Pagination
+    """
+    from .timelapse import list_frames, pick_source_target, _iso
+    with SessionLocal() as s:
+        cam = s.get(Cam, cam_id)
+        if cam is None:
+            raise HTTPException(404, "Cam nicht gefunden")
+        if source_target_id:
+            tgt = s.get(StorageTarget, source_target_id)
+            if not tgt or tgt.type != "local":
+                raise HTTPException(400, "Quelle muss ein local-Target sein")
+        else:
+            tgt = pick_source_target(s, cam)
+            if not tgt:
+                return {
+                    "cam_id": cam_id, "count": 0, "frames": [],
+                    "page": 1, "page_size": page_size, "total": 0,
+                    "error": "no_local_target",
+                }
+        try:
+            from_dt = _iso(from_) if from_ else datetime(1970, 1, 1)
+            to_dt = _iso(to) if to else datetime(2099, 12, 31, 23, 59, 59)
+        except ValueError as e:
+            raise HTTPException(400, f"Ungueltiges Datum: {e}")
+        frames = list_frames(
+            s, cam.id, tgt.id,
+            from_dt=from_dt, to_dt=to_dt,
+            weekdays=weekdays, time_start=time_start, time_end=time_end,
+        )
+        total = len(frames)
+        page = max(1, int(page or 1))
+        page_size = max(1, min(int(page_size or 1000), 5000))
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_frames = frames[start:end]
+        return {
+            "cam_id": cam_id,
+            "source_target_id": tgt.id,
+            "source_target_name": tgt.name,
+            "from": from_dt.isoformat(),
+            "to": to_dt.isoformat(),
+            "count": len(page_frames),
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_more": end < total,
+            "frames": [
+                {
+                    "id": f.upload_id,
+                    "ts": f.ts.isoformat(),
+                    "url": f"/api/cams/{cam_id}/timelapse/frame/{f.upload_id}",
+                }
+                for f in page_frames
+            ],
+        }
+
+
+@app.get("/api/cams/{cam_id}/timelapse/frame/{upload_id}")
+def api_timelapse_frame(
+    cam_id: int, upload_id: int, _: str = Depends(require_auth),
+):
+    """Streamt das JPEG eines konkreten Frames. Validiert cam-Zuordnung."""
+    with SessionLocal() as s:
+        tu = s.get(TargetUpload, upload_id)
+        if tu is None or tu.cam_id != cam_id:
+            raise HTTPException(404, "Frame nicht gefunden")
+        if tu.pruned_at is not None or not tu.remote_ref:
+            raise HTTPException(404, "Frame wurde geloescht")
+        path = Path(tu.remote_ref)
+        if not path.is_file():
+            raise HTTPException(404, "Datei fehlt auf der Disk")
+        suffix = path.suffix.lower()
+        mime = {
+            ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".png": "image/png", ".webp": "image/webp",
+        }.get(suffix, "image/jpeg")
+        return FileResponse(
+            str(path), media_type=mime,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+
+@app.post("/api/cams/{cam_id}/timelapse/render")
+async def api_timelapse_render(
+    cam_id: int, request: Request, user: User = Depends(require_admin),
+):
+    """Legt einen Render-Job an. Body: JSON mit den Render-Parametern.
+
+    Erwartet:
+      {from, to, fps, resolution, weekdays?, time_start?, time_end?,
+       best_of_day?, source_target_id?}
+    """
+    from .timelapse import (
+        enqueue_job, pick_source_target, FFMPEG_AVAILABLE,
+        DEFAULT_FPS, MIN_FPS, MAX_FPS, RESOLUTION_PRESETS, _iso,
+    )
+    if not FFMPEG_AVAILABLE:
+        raise HTTPException(
+            503,
+            "ffmpeg nicht installiert. Bitte 'sudo bash install.sh' erneut "
+            "ausfuehren (installiert ffmpeg ab v0.10.0).",
+        )
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Body muss JSON-Objekt sein")
+    with SessionLocal() as s:
+        cam = s.get(Cam, cam_id)
+        if cam is None:
+            raise HTTPException(404, "Cam nicht gefunden")
+        stid_raw = body.get("source_target_id")
+        if stid_raw:
+            try:
+                stid = int(stid_raw)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "Ungueltige source_target_id")
+            tgt = s.get(StorageTarget, stid)
+            if not tgt or tgt.type != "local":
+                raise HTTPException(400, "Quelle muss ein local-Target sein")
+        else:
+            tgt = pick_source_target(s, cam)
+            if not tgt:
+                raise HTTPException(
+                    400, "Diese Cam hat kein local-Target konfiguriert",
+                )
+        try:
+            from_dt = _iso(body.get("from"))
+            to_dt = _iso(body.get("to"))
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, f"Ungueltiger Zeitraum: {e}")
+        if to_dt <= from_dt:
+            raise HTTPException(400, "'to' muss nach 'from' liegen")
+        try:
+            fps = int(body.get("fps") or DEFAULT_FPS)
+        except (TypeError, ValueError):
+            fps = DEFAULT_FPS
+        fps = max(MIN_FPS, min(MAX_FPS, fps))
+        resolution = (body.get("resolution") or "1080p").strip()
+        if resolution not in RESOLUTION_PRESETS:
+            raise HTTPException(
+                400, f"resolution muss eines sein: "
+                     f"{list(RESOLUTION_PRESETS.keys())}",
+            )
+        params = {
+            "source_target_id": tgt.id,
+            "from": from_dt.isoformat(),
+            "to": to_dt.isoformat(),
+            "fps": fps,
+            "resolution": resolution,
+            "weekdays": body.get("weekdays") or None,
+            "time_start": body.get("time_start") or None,
+            "time_end": body.get("time_end") or None,
+            "best_of_day": bool(body.get("best_of_day")),
+        }
+        job = enqueue_job(s, cam, params)
+        return {"ok": True, "job_id": job.id, "status": job.status}
+
+
+@app.get("/api/timelapse/jobs/{job_id}")
+def api_timelapse_job_status(
+    job_id: int, _: str = Depends(require_auth),
+):
+    """Polling-Endpoint fuer den Job-Fortschritt."""
+    from .db import TimelapseJob
+    with SessionLocal() as s:
+        job = s.get(TimelapseJob, job_id)
+        if job is None:
+            raise HTTPException(404, "Job nicht gefunden")
+        out = {
+            "job_id": job.id,
+            "cam_id": job.cam_id,
+            "status": job.status,
+            "progress_pct": job.progress_pct or 0,
+            "frame_count": job.frame_count,
+            "bytes": job.bytes,
+            "duration_s": job.duration_s,
+            "error_message": job.error_message,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        }
+        if job.status == "done" and job.output_path:
+            out["download_url"] = f"/api/timelapse/jobs/{job.id}/download"
+        try:
+            out["params"] = json.loads(job.params_json or "{}")
+        except json.JSONDecodeError:
+            out["params"] = {}
+        return out
+
+
+@app.get("/api/timelapse/jobs/{job_id}/download")
+def api_timelapse_job_download(
+    job_id: int, _: str = Depends(require_auth),
+):
+    """Liefert das gerenderte MP4 als Download."""
+    from .db import TimelapseJob
+    with SessionLocal() as s:
+        job = s.get(TimelapseJob, job_id)
+        if job is None:
+            raise HTTPException(404, "Job nicht gefunden")
+        if job.status != "done" or not job.output_path:
+            raise HTTPException(409, "Job ist nicht 'done'")
+        path = Path(job.output_path)
+        if not path.is_file():
+            raise HTTPException(404, "Render-Output existiert nicht mehr")
+        return FileResponse(
+            str(path), media_type="video/mp4", filename=path.name,
+        )
+
+
+@app.post("/api/timelapse/jobs/{job_id}/delete")
+def api_timelapse_job_delete(
+    job_id: int, user: User = Depends(require_admin),
+):
+    """Loescht einen Job-Eintrag inkl. Output-Datei."""
+    from .db import TimelapseJob
+    with SessionLocal() as s:
+        job = s.get(TimelapseJob, job_id)
+        if job is None:
+            raise HTTPException(404, "Job nicht gefunden")
+        if job.output_path:
+            try:
+                p = Path(job.output_path)
+                if p.is_file():
+                    p.unlink()
+            except OSError as e:
+                log.warning(
+                    "delete: konnte %s nicht loeschen: %s",
+                    job.output_path, e,
+                )
+        cam_id = job.cam_id
+        s.delete(job)
+        s.commit()
+    return {"ok": True, "cam_id": cam_id}
+
+
+# ====================== Timelapse-Cache-Settings (v0.10.0) ======================
+
+@app.post("/settings/timelapse_cache")
+async def settings_timelapse_cache(
+    request: Request, user: User = Depends(require_admin),
+):
+    """Setzt die DB-Overrides fuer Timelapse-Cache-Cap und Pro-Cam-Retention."""
+    form = await request.form()
+    raw_cap = (form.get("timelapse_cache_max_gb") or "").strip()
+    raw_per_cam = (form.get("timelapse_retention_per_cam") or "").strip()
+    with SessionLocal() as s:
+        if raw_cap:
+            try:
+                set_setting(
+                    s, "timelapse_cache_max_gb", str(max(0, int(raw_cap))),
+                )
+            except ValueError:
+                pass
+        else:
+            set_setting(s, "timelapse_cache_max_gb", "")
+        if raw_per_cam:
+            try:
+                set_setting(
+                    s, "timelapse_retention_per_cam",
+                    str(max(1, int(raw_per_cam))),
+                )
+            except ValueError:
+                pass
+        else:
+            set_setting(s, "timelapse_retention_per_cam", "")
+    return RedirectResponse(
+        url="/settings#timelapse-cache", status_code=303,
+    )
 
 
 @app.get("/albums")
@@ -862,12 +1226,30 @@ def _system_stats(s):
 
 @app.get("/settings")
 def settings_view(request: Request, user: User = Depends(require_auth)):
+    from .db import TimelapseJob
     with SessionLocal() as s:
         cookies_raw = get_setting(s, "amazon_cookies", "")
         tld = get_setting(s, "amazon_tld", "de")
         retention_days = int(get_setting(s, "fetch_retention_days", "0") or "0")
         users = s.query(User).order_by(User.id).all()
         stats = _system_stats(s)
+        # v0.10.0: Timelapse-Cache-Einstellungen + aktuelle Auslastung
+        tl_cache_max_gb_db = get_setting(s, "timelapse_cache_max_gb", "")
+        tl_per_cam_db = get_setting(s, "timelapse_retention_per_cam", "")
+        tl_cache_used = (
+            s.query(sa_func.coalesce(sa_func.sum(TimelapseJob.bytes), 0))
+            .filter(
+                TimelapseJob.status == "done",
+                TimelapseJob.output_path.isnot(None),
+            )
+            .scalar() or 0
+        )
+        tl_render_count = (
+            s.query(TimelapseJob)
+            .filter(TimelapseJob.status == "done",
+                    TimelapseJob.output_path.isnot(None))
+            .count()
+        )
     amazon_ok, amazon_msg = uploader_health()
     env_status = _env_file_status()
     cookie_keys = []
@@ -905,6 +1287,12 @@ def settings_view(request: Request, user: User = Depends(require_auth)):
             "stats": stats,
             "retention_days": retention_days,
             "env_status": env_status,
+            "timelapse_cache_max_gb_db": tl_cache_max_gb_db,
+            "timelapse_cache_max_gb_env": settings.timelapse_cache_max_gb,
+            "timelapse_retention_per_cam_db": tl_per_cam_db,
+            "timelapse_retention_per_cam_env": settings.timelapse_retention_per_cam,
+            "timelapse_cache_used_bytes": tl_cache_used,
+            "timelapse_render_count": tl_render_count,
         },
     )
 

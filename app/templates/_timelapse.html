@@ -1,0 +1,214 @@
+{# Partial: Timelapse-Tab. Erwartet im Context: cam, local_targets,
+   preferred_target_id, frame_stats {target_id: {count, first_ts, last_ts}},
+   timelapse_jobs, ffmpeg_available. #}
+
+{% if not local_targets %}
+  <div class="card empty-card">
+    <h3>Kein Local-Target verfügbar</h3>
+    <p class="muted">
+      Diese Webcam schreibt aktuell nur an Nicht-Local-Targets. Timelapse braucht
+      Bilder auf dem lokalen Filesystem.
+    </p>
+    <p class="muted">
+      Lege ein <strong>Local-Target</strong> unter
+      <a href="/storage">Speicherziele</a> an und ordne es dieser Cam zu
+      (Tab „Bearbeiten" → Speicherziele). Du kannst Cams parallel an mehrere
+      Targets schreiben lassen — alle bestehenden Uploads zu Amazon/SFTP/S3
+      bleiben unverändert.
+    </p>
+  </div>
+{% else %}
+
+{% if not ffmpeg_available %}
+  <div class="card warn-card">
+    ⚠ <strong>ffmpeg ist nicht installiert</strong> — Vorschau-Slideshow funktioniert,
+    MP4-Export ist deaktiviert. Bitte
+    <code>sudo bash install.sh</code> aus dem Bundle erneut ausführen
+    (installiert ffmpeg ab v0.10.0).
+  </div>
+{% endif %}
+
+<div class="tl-grid">
+
+  <div class="card tl-card">
+    <h3 class="tl-card-h">Quelle</h3>
+    <label class="form-row">
+      <span>Storage-Target</span>
+      <select id="tl-source">
+        {% for t in local_targets %}
+          {% set fs = frame_stats.get(t.id, {}) %}
+          <option value="{{ t.id }}"
+                  data-count="{{ fs.get('count', 0) }}"
+                  data-first="{{ fs.get('first_ts').isoformat() if fs.get('first_ts') else '' }}"
+                  data-last="{{ fs.get('last_ts').isoformat() if fs.get('last_ts') else '' }}"
+                  {% if t.id == preferred_target_id %}selected{% endif %}>
+            {{ t.name }} — {{ fs.get('count', 0) }} Bilder
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted small" id="tl-source-info"></p>
+  </div>
+
+  <div class="card tl-card">
+    <h3 class="tl-card-h">Zeitraum &amp; Filter</h3>
+    <div class="form-grid tl-form-grid">
+      <label>
+        <span>Von</span>
+        <input type="datetime-local" id="tl-from">
+      </label>
+      <label>
+        <span>Bis</span>
+        <input type="datetime-local" id="tl-to">
+      </label>
+      <label class="span2">
+        <span>Wochentage</span>
+        <div class="weekday-row" id="tl-weekdays">
+          {% for i in range(7) %}
+            <label class="weekday">
+              <input type="checkbox" data-wd="{{ i }}" checked>
+              {{ WEEKDAY_LABELS[i] }}
+            </label>
+          {% endfor %}
+        </div>
+      </label>
+      <label>
+        <span>Tageszeit von</span>
+        <input type="time" id="tl-time-start" placeholder="leer = ganztägig">
+      </label>
+      <label>
+        <span>Tageszeit bis</span>
+        <input type="time" id="tl-time-end" placeholder="leer = ganztägig">
+      </label>
+      <label class="span2 inline">
+        <input type="checkbox" id="tl-best-of-day">
+        <span>Best-of-Day — nur das hellste Bild pro Kalendertag</span>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" type="button" id="tl-load-btn">Vorschau laden</button>
+      <span class="muted small" id="tl-load-info"></span>
+    </div>
+  </div>
+
+  <div class="card tl-card span2">
+    <h3 class="tl-card-h">Vorschau / Slideshow</h3>
+    <div class="tl-player">
+      <div class="tl-stage">
+        <img id="tl-image" alt="Timelapse-Frame" draggable="false">
+        <div class="tl-stage-empty" id="tl-stage-empty">
+          Klick „Vorschau laden" oben, um die Frames für die Slideshow zu fetchen.
+        </div>
+      </div>
+      <div class="tl-controls">
+        <button class="btn small ghost" type="button" id="tl-prev" title="Vorheriges Bild">◀</button>
+        <button class="btn small primary" type="button" id="tl-play" title="Play / Pause">▶</button>
+        <button class="btn small ghost" type="button" id="tl-next" title="Nächstes Bild">▶</button>
+        <span class="tl-ts" id="tl-ts">—</span>
+        <span class="tl-counter" id="tl-counter">0 / 0</span>
+        <label class="tl-fps-label">
+          FPS
+          <input type="range" id="tl-fps" min="1" max="60" value="15">
+          <span id="tl-fps-val">15</span>
+        </label>
+      </div>
+      <input type="range" id="tl-scrub" class="tl-scrub" min="0" max="0" value="0" step="1">
+    </div>
+  </div>
+
+  <div class="card tl-card span2">
+    <h3 class="tl-card-h">MP4-Export</h3>
+    <div class="form-grid tl-form-grid">
+      <label>
+        <span>Auflösung</span>
+        <select id="tl-resolution">
+          <option value="1080p" selected>1080p (Standard)</option>
+          <option value="720p">720p (kleiner)</option>
+          <option value="original">Original</option>
+        </select>
+      </label>
+      <label>
+        <span>Render-FPS</span>
+        <input type="number" id="tl-render-fps" min="1" max="60" value="25">
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" type="button" id="tl-render-btn"
+              {% if not ffmpeg_available %}disabled{% endif %}>
+        ⤓ Als MP4 exportieren
+      </button>
+      <span class="muted small" id="tl-render-info">
+        Verwendet die gleichen Filter wie die Vorschau-Slideshow oben.
+      </span>
+    </div>
+  </div>
+
+  <div class="card tl-card span2">
+    <h3 class="tl-card-h">Renderings</h3>
+    <div id="tl-jobs">
+      {% if timelapse_jobs %}
+        <table class="table tl-jobs-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Erstellt</th>
+              <th>Frames</th>
+              <th>Größe</th>
+              <th>Render-Dauer</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tl-jobs-body">
+            {% for j in timelapse_jobs %}
+            <tr data-job-id="{{ j.id }}" data-job-status="{{ j.status }}">
+              <td>
+                {% if j.status == 'done' %}
+                  <span class="pill on">✓ fertig</span>
+                {% elif j.status == 'running' %}
+                  <span class="pill status-pending">⟳ rendert {{ j.progress_pct }}%</span>
+                {% elif j.status == 'pending' %}
+                  <span class="pill status-pending">⏳ wartet</span>
+                {% elif j.status == 'error' %}
+                  <span class="pill status-fetch_error" title="{{ j.error_message }}">⚠ Fehler</span>
+                {% else %}
+                  <span class="pill status-unknown">{{ j.status }}</span>
+                {% endif %}
+              </td>
+              <td>{{ j.created_at | localfmt('%d.%m. %H:%M') }}</td>
+              <td>{{ j.frame_count or "—" }}</td>
+              <td>{% if j.bytes %}{{ "%.1f MB" % (j.bytes / 1024 / 1024) }}{% else %}—{% endif %}</td>
+              <td>{% if j.duration_s %}{{ "%.0fs" % j.duration_s }}{% else %}—{% endif %}</td>
+              <td class="actions-cell">
+                {% if j.status == 'done' and j.output_path %}
+                  <a class="btn small ghost" href="/api/timelapse/jobs/{{ j.id }}/download">↓ Download</a>
+                {% endif %}
+                <form method="post" action="/api/timelapse/jobs/{{ j.id }}/delete"
+                      style="display:inline"
+                      onsubmit="return tlDeleteJob(event, {{ j.id }});">
+                  <button class="btn small danger" type="submit">⨯ Löschen</button>
+                </form>
+              </td>
+            </tr>
+            {% if j.status == 'error' and j.error_message %}
+            <tr class="tl-job-err"><td colspan="6"><small class="warn">{{ j.error_message }}</small></td></tr>
+            {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="empty">Noch keine Renderings für diese Cam.</p>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<script>
+window.TL_CTX = {
+  camId: {{ cam.id }},
+  preferredTargetId: {{ preferred_target_id|tojson }},
+  ffmpegAvailable: {{ "true" if ffmpeg_available else "false" }}
+};
+</script>
+
+{% endif %}

@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}{{ cam.name }} – Webcam-Uploader{% endblock %}
+{% block content %}
+
+<div class="section-head cam-detail-head">
+  <div>
+    <a class="back-link" href="/cams">← Webcams</a>
+    <h2>
+      {{ cam.name }}
+      {% if not cam.enabled %}<span class="pill off">aus</span>{% endif %}
+      <span class="pill status-{{ cam.last_status or 'unknown' }}">{{ cam.last_status or "—" }}</span>
+    </h2>
+    <div class="muted small">
+      {% if cam.album %}<span>📁 {{ cam.album.name }}</span> · {% endif %}
+      <span>⏱ alle {{ cam.interval_minutes }} min</span>
+      {% if cam.last_fetch_at %}
+        · letzter Fetch {{ cam.last_fetch_at | localfmt('%d.%m.%Y %H:%M') }}
+        <small class="muted">({{ cam.last_fetch_at | rel }})</small>
+      {% endif %}
+    </div>
+  </div>
+  <div class="cam-detail-actions">
+    <form method="post" action="/cams/{{ cam.id }}/run" style="display:inline">
+      <button class="btn ghost small" type="submit">▶ Jetzt fetchen</button>
+    </form>
+    <form method="post" action="/cams/{{ cam.id }}/toggle" style="display:inline">
+      <button class="btn ghost small" type="submit">{{ "Pause" if cam.enabled else "An" }}</button>
+    </form>
+  </div>
+</div>
+
+<div class="tabs" data-tabs>
+  <nav class="tab-nav" role="tablist">
+    <a class="tab-btn" role="tab" data-tab-target="vorschau" href="#vorschau">📷 Vorschau</a>
+    <a class="tab-btn" role="tab" data-tab-target="timelapse" href="#timelapse">🎞 Timelapse</a>
+    <a class="tab-btn" role="tab" data-tab-target="logs" href="#logs">📋 Logs</a>
+    <a class="tab-btn" role="tab" data-tab-target="bearbeiten" href="#bearbeiten">⚙ Bearbeiten</a>
+  </nav>
+
+  <section class="tab-panel" data-tab-panel="vorschau" role="tabpanel">
+    <div class="cam-preview-wrap">
+      <a href="/preview/cam/{{ cam.id }}/full" target="_blank" rel="noopener">
+        <img class="cam-preview-img" src="/preview/cam/{{ cam.id }}?t={{ cam.last_fetch_at|localfmt('%s') if cam.last_fetch_at else '0' }}"
+             alt="Vorschau {{ cam.name }}"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+        <div class="cam-preview-empty" style="display:none">
+          Noch keine Vorschau vorhanden. Klick „Jetzt fetchen" oben.
+        </div>
+      </a>
+    </div>
+    <dl class="kv-list">
+      <dt>Bild-URL</dt>
+      <dd><code class="url-cell" title="{{ cam.url }}">{{ cam.url }}</code></dd>
+      <dt>Lifetime-Counter</dt>
+      <dd>
+        <span class="pill on">{{ cam.total_uploads or 0 }} ok</span>
+        <span class="pill status-duplicate">{{ cam.total_duplicates or 0 }} dup</span>
+        <span class="pill status-fetch_error">{{ cam.total_errors or 0 }} err</span>
+      </dd>
+      <dt>Storage-Targets</dt>
+      <dd>
+        {% if cam.storage_targets %}
+          {% for t in cam.storage_targets %}
+            <span class="pill {% if t.enabled %}on{% else %}off{% endif %}" title="{{ t.type }}">{{ t.name }}</span>
+          {% endfor %}
+        {% else %}
+          <span class="muted">— keins —</span>
+        {% endif %}
+      </dd>
+      <dt>Zeitfenster</dt>
+      <dd>
+        {% if cam.use_solar %}
+          ☀ Sunrise/Sunset
+          {% if cam.solar_offset_min %}({{ cam.solar_offset_min }}m){% endif %}
+          <small class="muted">{{ cam.latitude }}, {{ cam.longitude }} · {{ cam.timezone }}</small>
+        {% else %}
+          {{ cam.time_start or "00:00" }}–{{ cam.time_end or "23:59" }}
+        {% endif %}
+      </dd>
+      <dt>Wochentage</dt>
+      <dd class="weekdays-cell">
+        {% for i in range(7) %}
+          <span class="day {% if cam.weekdays[i] == '1' %}on{% endif %}">{{ WEEKDAY_LABELS[i] }}</span>
+        {% endfor %}
+      </dd>
+    </dl>
+  </section>
+
+  <section class="tab-panel" data-tab-panel="timelapse" role="tabpanel">
+    {% include "_timelapse.html" %}
+  </section>
+
+  <section class="tab-panel" data-tab-panel="logs" role="tabpanel">
+    <div class="section-head">
+      <h3>Letzte Fetches</h3>
+      <a class="btn ghost small" href="/logs?cam_id={{ cam.id }}">Alle Logs öffnen →</a>
+    </div>
+    {% if recent_fetches %}
+    <div class="table-wrap"><table class="table">
+      <thead>
+        <tr>
+          <th>Zeit</th><th>Status</th><th>Bytes</th><th>Targets</th><th>Nachricht</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in recent_fetches %}
+        <tr>
+          <td>{{ f.started_at | localfmt('%d.%m %H:%M:%S') }}</td>
+          <td><span class="pill status-{{ f.status }}">{{ f.status }}</span></td>
+          <td>{{ "%.1f KB" % (f.bytes / 1024) if f.bytes else "—" }}</td>
+          <td>
+            {% for tu in f.target_uploads %}
+              <span class="pill {% if tu.status == 'success' %}on{% elif tu.status == 'skipped' %}status-duplicate{% else %}off{% endif %}"
+                    title="{{ tu.target_name }}">{{ tu.target_name or '—' }}</span>
+            {% endfor %}
+          </td>
+          <td class="muted small">{{ (f.message or "")[:80] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}
+      <p class="empty">Noch keine Fetches für diese Cam.</p>
+    {% endif %}
+  </section>
+
+  <section class="tab-panel" data-tab-panel="bearbeiten" role="tabpanel">
+    {% include "_cam_form.html" %}
+  </section>
+</div>
+
+<script>
+(function() {
+  // --- Tab-Switcher (URL-Hash gesteuert, Default: vorschau) ---
+  var TABS = ['vorschau', 'timelapse', 'logs', 'bearbeiten'];
+  var btns = document.querySelectorAll('[data-tab-target]');
+  var panels = document.querySelectorAll('[data-tab-panel]');
+
+  function activate(name) {
+    if (TABS.indexOf(name) === -1) name = 'vorschau';
+    btns.forEach(function(b) {
+      b.classList.toggle('active', b.dataset.tabTarget === name);
+    });
+    panels.forEach(function(p) {
+      p.classList.toggle('active', p.dataset.tabPanel === name);
+    });
+    // Bei Wechsel auf Bearbeiten ggf. Map-Init triggern (Leaflet braucht
+    // sichtbares Container-Element fuer korrekte Groessenberechnung).
+    if (name === 'bearbeiten' && window._map) {
+      try { window._map.invalidateSize(); } catch (_) {}
+    }
+  }
+
+  function fromHash() {
+    var h = (location.hash || '').replace('#', '');
+    activate(h || 'vorschau');
+  }
+
+  fromHash();
+  window.addEventListener('hashchange', fromHash);
+})();
+</script>
+
+<script src="/static/timelapse.js"></script>
+
+{% endblock %}

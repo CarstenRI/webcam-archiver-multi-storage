@@ -52,6 +52,7 @@
     <a href="#netzwerk">🌐 Netzwerk &amp; Port</a>
     <a href="#users">👥 User-Verwaltung</a>
     <a href="#retention">🧹 Log-Aufbewahrung</a>
+    <a href="#timelapse-cache">🎞 Timelapse-Cache</a>
     <a href="#backup">💾 Backup &amp; Restore</a>
     {% endif %}
     <a href="#amazon">🍪 Amazon Cookies</a>
@@ -231,6 +232,43 @@
         <small><strong>0 = unbegrenzt.</strong> Läuft täglich auf alle Fetch- und Target-Upload-Einträge.
           Bild-Dateien selbst werden über das Retention-Feld am Speicherziel verwaltet.</small>
       </label>
+      <div class="form-actions">
+        <button class="btn primary" type="submit">Speichern</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card settings-card" id="timelapse-cache">
+    <header class="card-head">
+      <h3><span class="card-icon">🎞</span> Timelapse-Cache</h3>
+      <small class="muted">Aufbewahrung und Speicher-Cap für gerenderte Timelapse-Videos.</small>
+    </header>
+    <dl class="kv-list">
+      <dt>Aktuelle Auslastung</dt>
+      <dd>
+        <strong>{{ "%.1f MB" % (timelapse_cache_used_bytes / 1024 / 1024) }}</strong>
+        <small class="muted">in {{ timelapse_render_count }} Renderings</small>
+      </dd>
+    </dl>
+    <form method="post" action="/settings/timelapse_cache" class="form form-tight">
+      <div class="form-grid">
+        <label>
+          <span>Cache-Cap (GB, global)</span>
+          <input type="number" name="timelapse_cache_max_gb" min="0" max="9999"
+                 value="{{ timelapse_cache_max_gb_db }}"
+                 placeholder="Standard: {{ timelapse_cache_max_gb_env }}">
+          <small>Wenn die Summe aller Renderings überschritten wird, werden die ältesten gelöscht.
+            Leer = env-Default ({{ timelapse_cache_max_gb_env }} GB) verwenden. <strong>0 = unbegrenzt.</strong></small>
+        </label>
+        <label>
+          <span>Renderings pro Cam (max.)</span>
+          <input type="number" name="timelapse_retention_per_cam" min="1" max="999"
+                 value="{{ timelapse_retention_per_cam_db }}"
+                 placeholder="Standard: {{ timelapse_retention_per_cam_env }}">
+          <small>Älteste Renderings einer Cam werden automatisch gelöscht, sobald mehr als N existieren.
+            Leer = env-Default ({{ timelapse_retention_per_cam_env }}).</small>
+        </label>
+      </div>
       <div class="form-actions">
         <button class="btn primary" type="submit">Speichern</button>
       </div>

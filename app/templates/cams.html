@@ -126,7 +126,7 @@
         </form>
       </td>
       <td>
-        <strong>{{ cam.name }}</strong>
+        <a href="/cams/{{ cam.id }}" class="cam-name-link"><strong>{{ cam.name }}</strong></a>
         {% if not cam.enabled %}<span class="pill off">aus</span>{% endif %}
       </td>
       <td class="url-cell" title="{{ cam.url }}">{{ cam.url[:50] }}{% if cam.url|length > 50 %}…{% endif %}</td>
@@ -148,6 +148,7 @@
       </td>
       <td><span class="pill status-{{ cam.last_status or 'unknown' }}">{{ cam.last_status or "—" }}</span></td>
       <td class="actions-cell">
+        <a class="btn small ghost" href="/cams/{{ cam.id }}#timelapse" title="Timelapse-Video">🎞 Video</a>
         <a class="btn small ghost" href="/cams/{{ cam.id }}/edit">Bearbeiten</a>
         <form method="post" action="/cams/{{ cam.id }}/toggle" style="display:inline">
           <button class="btn small ghost" type="submit">{{ "Pause" if cam.enabled else "An" }}</button>

@@ -5,7 +5,7 @@ Alle nennenswerten Änderungen an diesem Projekt sind hier dokumentiert.
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
-## [0.10.0-dev] – 2026-05-12 (in progress)
+## [0.10.0] – 2026-05-12
 
 ### Foundation laid (this commit)
 - **Design-Dokument** `docs/timelapse-design.md` mit kompletter Architektur:
@@ -45,11 +45,48 @@ und das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   - Der Log-Retention-Daily-Job wurde in `_daily_cleanup()` zusammengefasst
     und ruft jetzt auch `timelapse.cleanup_cache()` auf.
 
-### Coming next (later commits in the v0.10.0 release)
-- Cam-Detail-Page mit Tabs (Vorschau, Timelapse, Logs, Bearbeiten).
-- Browser-Diashow + Render-Form mit Status-Polling.
-- Best-of-Day-Helligkeitsfilter.
-- Settings-Sub-Sektion "Timelapse-Cache" mit Live-Auslastungsanzeige.
+### UI layer (this commit)
+- **Cam-Detail-Page `/cams/{id}`** mit Tab-Navigation
+  (Vorschau / Timelapse / Logs / Bearbeiten). Tabs werden ueber URL-Hash gewaehlt,
+  Default-Tab ist Vorschau. `/cams/{id}/edit` 302-redirected auf `/cams/{id}#bearbeiten`
+  fuer Bookmark-Kompatibilitaet.
+- **Vorschau-Tab:** Aktuelle Cam-Preview (Klick = Full-Size-Lightbox), Lifetime-Counter
+  (ok/dup/err), Zeitfenster, Wochentage, alle aktiven Storage-Targets als Pills.
+- **Timelapse-Tab:**
+  - Source-Picker mit Live-Anzeige der verfuegbaren Frames + Zeit-Range pro Target.
+  - Date-Range-Form (Von/Bis, Wochentage, Tageszeit-Fenster, Best-of-Day-Toggle).
+  - Browser-Slideshow-Player: lazy-loaded JSON-Chunks (1000 Frames/Page), automatisches
+    Nachladen ab 80% Page-Progress, FPS-Slider, Scrub-Bar, Tastatur-Shortcuts
+    (Space=Play/Pause, ◀/▶=Step).
+  - MP4-Render-Form: Resolution-Preset (1080p/720p/Original), Render-FPS, Submit
+    triggert `POST /api/cams/{id}/timelapse/render`. 2s-Polling auf den Job-Status,
+    nach Erfolg automatischer Tabellen-Reload.
+  - Job-Tabelle mit Status-Pills, Download-Button, Loesch-Button (mit Confirm-Dialog).
+  - Info-Karte falls die Cam kein Local-Target hat (Link zu `/storage`).
+- **Logs-Tab:** Embedded Liste der letzten 50 Fetches dieser Cam mit Per-Target-Status-
+  Pills. Tiefer-Einstieg via "Alle Logs öffnen →" Button.
+- **Bearbeiten-Tab:** Existierendes Cam-Form, refactored in das neue Partial
+  `app/templates/_cam_form.html` damit es sowohl in `cam_form.html` (Neu-Anlage)
+  als auch im Detail-Tab embedded werden kann. Leaflet-Map fuer Geo-Picker bleibt
+  unveraendert.
+- **Settings-Sub-Sektion "Timelapse-Cache":**
+  Zeigt die aktuelle Auslastung (Summe der gerenderten Bytes + Render-Count).
+  Inputs fuer die DB-Overrides `timelapse_cache_max_gb` und
+  `timelapse_retention_per_cam`. Leerlassen = env-Defaults aus `.env` verwenden.
+
+### Routes (this commit)
+- `GET  /cams/{id}` — Tab-basierte Detail-Page.
+- `GET  /api/cams/{id}/timelapse/frames` — paginierte JSON-Frame-Liste mit Filtern
+  (from/to/source_target_id/weekdays/time_start/time_end/page/page_size).
+- `GET  /api/cams/{id}/timelapse/frame/{upload_id}` — JPEG-Stream eines Frames,
+  validiert cam-Zuordnung und `pruned_at IS NULL`. Cache-Header fuer Browser-Cache.
+- `POST /api/cams/{id}/timelapse/render` — Job-Enqueue. Validiert Source-Target,
+  FPS-Clamp, Resolution-Preset. 503 wenn ffmpeg fehlt.
+- `GET  /api/timelapse/jobs/{job_id}` — Polling-Endpoint mit `progress_pct`,
+  `frame_count`, `bytes`, `duration_s`, `download_url` wenn done.
+- `GET  /api/timelapse/jobs/{job_id}/download` — MP4-Download.
+- `POST /api/timelapse/jobs/{job_id}/delete` — Job + Output-File loeschen.
+- `POST /settings/timelapse_cache` — DB-Overrides fuer Cache-Cap + Per-Cam-Retention.
 
 ## [0.9.3] – 2026-05-11
 

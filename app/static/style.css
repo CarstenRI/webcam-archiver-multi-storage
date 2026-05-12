@@ -1226,3 +1226,254 @@ nav a.logout-link:hover { color: #ff7a8a; background: transparent; }
   font-weight: 700;
   color: #ffcb8c;
 }
+
+/* =========================================================
+ * v0.10.0 — Cam-Detail-Page mit Tabs + Timelapse-Player
+ * ========================================================= */
+
+/* --- Cam-Detail Header --- */
+.cam-detail-head {
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.cam-detail-head h2 {
+  display: flex; align-items: center; gap: 10px;
+  margin: 4px 0 6px;
+}
+.cam-detail-head h2 .pill { font-size: 12px; }
+.cam-detail-head .small { font-size: 12px; }
+.cam-detail-actions { display: flex; gap: 8px; }
+.back-link {
+  display: inline-block;
+  font-size: 13px;
+  color: #6db1ff;
+  margin-bottom: 4px;
+}
+
+/* --- Tabs --- */
+.tabs { margin-top: 8px; }
+.tab-nav {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #232a36;
+  margin-bottom: 16px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.tab-btn {
+  display: inline-block;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #aab3c2;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  border-radius: 6px 6px 0 0;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover {
+  background: #1c222e;
+  color: #e6e9ef;
+  text-decoration: none;
+}
+.tab-btn.active {
+  color: #fff;
+  border-bottom-color: #2b6cff;
+  background: #1a1f2a;
+}
+.tab-panel { display: none; }
+.tab-panel.active { display: block; animation: fadeInTab 0.15s ease-in; }
+@keyframes fadeInTab {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Vorschau-Tab --- */
+.cam-preview-wrap {
+  text-align: center;
+  margin-bottom: 18px;
+  background: #0a0d12;
+  border: 1px solid #232a36;
+  border-radius: 8px;
+  padding: 8px;
+}
+.cam-preview-img {
+  max-width: 100%;
+  max-height: 60vh;
+  border-radius: 6px;
+  display: inline-block;
+}
+.cam-preview-empty {
+  padding: 64px 24px;
+  color: #6b7585;
+  font-size: 14px;
+}
+.cam-name-link strong { color: #fff; }
+.cam-name-link:hover strong { color: #6db1ff; text-decoration: underline; }
+
+/* --- Timelapse-Tab Layout --- */
+.tl-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.tl-card { padding: 16px 20px; }
+.tl-card .span2 { grid-column: span 2; }
+.tl-card.span2 { grid-column: span 2; }
+.tl-card-h {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #aab3c2;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.tl-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+.tl-form-grid .span2 { grid-column: span 2; }
+
+/* --- Timelapse-Player --- */
+.tl-player {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tl-stage {
+  position: relative;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tl-stage img {
+  display: none;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: 100%;
+  object-fit: contain;
+}
+.tl-stage-empty {
+  color: #6b7585;
+  font-size: 14px;
+  padding: 32px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tl-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tl-ts {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: #aab3c2;
+  min-width: 160px;
+}
+.tl-counter {
+  font-size: 12px;
+  color: #6b7585;
+  margin-left: auto;
+}
+.tl-fps-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #aab3c2;
+}
+.tl-fps-label input[type="range"] {
+  width: 100px;
+}
+.tl-fps-label span {
+  font-family: ui-monospace, monospace;
+  min-width: 18px;
+  text-align: right;
+  color: #fff;
+}
+.tl-scrub {
+  width: 100%;
+  margin: 4px 0 0;
+  accent-color: #2b6cff;
+}
+
+/* --- Jobs-Tabelle --- */
+.tl-jobs-table { width: 100%; }
+.tl-jobs-table .actions-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+.tl-job-err td { background: rgba(74, 30, 44, 0.25); padding: 8px 14px; }
+.tl-job-err .warn {
+  color: #e58ea1;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+/* --- Generic helper cards for Timelapse-Info/Warn --- */
+.empty-card {
+  padding: 24px;
+  text-align: center;
+}
+.empty-card h3 { margin-top: 0; }
+.warn-card {
+  border-left: 3px solid #e5c98e;
+  background: rgba(74, 59, 30, 0.2);
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+/* --- Slider/Range Styling fuer FPS + Scrub (modern browsers) --- */
+input[type="range"] {
+  height: 18px;
+}
+
+/* --- Form-Row Helper (Source-Picker) --- */
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.form-row > span {
+  font-weight: 500;
+  font-size: 13px;
+  color: #b8bdc8;
+}
+.form-row > select,
+.form-row > input {
+  background: #0d1117;
+  color: #e6e9ef;
+  border: 1px solid #2b3340;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+/* --- Mobile-Overrides (<= 768px) --- */
+@media (max-width: 768px) {
+  .tl-grid { grid-template-columns: 1fr; gap: 10px; }
+  .tl-card.span2 { grid-column: auto; }
+  .tl-card .span2 { grid-column: auto; }
+  .tl-form-grid { grid-template-columns: 1fr; }
+  .tl-form-grid .span2 { grid-column: auto; }
+  .tab-btn { padding: 8px 12px; font-size: 13px; }
+  .tl-controls { flex-wrap: wrap; }
+  .tl-ts { min-width: 0; flex: 1 1 100%; }
+  .tl-counter { margin-left: 0; }
+  .cam-detail-head { flex-direction: column; gap: 8px; }
+  .cam-detail-actions { width: 100%; }
+}
