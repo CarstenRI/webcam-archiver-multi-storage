@@ -5,6 +5,57 @@ Alle nennenswerten Änderungen an diesem Projekt sind hier dokumentiert.
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.12.0] – 2026-05-25
+
+### Added
+- **Amazon-Session-Heartbeat — Cookies refreshen sich jetzt selbst.** Statt
+  alle 24-72h manuell Cookies aus DevTools ins UI zu kopieren, pingt der
+  Server periodisch `https://www.amazon.de/photos/` mit den aktuellen
+  Cookies an. Amazon rolliert dabei `session-id` und `session-token` wie
+  bei einem normalen Browser-Besuch. Die Kurzlauf-Cookies leben damit
+  praktisch unbegrenzt; nur der `at-acbde`-Cookie (vom Login) hat seine
+  eigene TTL und braucht weiter gelegentlich manuellen Re-Login.
+- **Sekundaer-Heartbeat** alle 24h (default) auf `/gp/your-account/order-history`:
+  antwortet zwar mit 401 (Step-Up-Auth), rolliert aber `ubid-acbde` und
+  `x-acbde`. Session selbst bleibt valide.
+- **Upload-Cookie-Persist**: jeder erfolgreiche Webcam-Upload schreibt
+  rollierte Cookies aus dem httpx-Jar zurueck in die DB. Effektiv ist also
+  jeder Upload-Cycle ein kostenloser Cookie-Refresh.
+- **Cookie-Health-Sektion in `/settings`**: tabellarische Ansicht jedes
+  Cookies mit Expires-Datum + Restzeit + Status-Pille (gruen/gelb/rot).
+  Banner "manueller Re-Login noetig" wenn at-acbde ablaeuft. Buttons
+  "Heartbeat jetzt" und "Sekundaer-Refresh" fuer On-Demand-Trigger.
+- Neuer Modul `app/amazon_session.py` mit `heartbeat()`, `secondary_refresh()`,
+  `cookie_health()`, `health_summary()`, `merge_into_db()`, `cookies_from_jar()`.
+- Neue API-Endpoints:
+  - `GET /api/amazon-cookies/health` — JSON-Aggregat fuer Live-UI
+  - `POST /api/amazon-cookies/heartbeat` — manueller Primary-Trigger (admin)
+  - `POST /api/amazon-cookies/secondary` — manueller Sekundaer-Trigger (admin)
+- Neue Settings:
+  - `WU_AMAZON_HEARTBEAT_MINUTES` (default 360 = 6h)
+  - `WU_AMAZON_SECONDARY_MINUTES` (default 1440 = 24h)
+  - `WU_AMAZON_HEARTBEAT_ENABLED` (default true; auf false setzen schaltet alle
+    Heartbeats ab)
+
+### Changed
+- `app/uploader.py`: `upload_file()` ruft nach erfolgreichem POST
+  `_persist_client_cookies()` auf. Setzt rollierte Cookies in der DB +
+  triggert `reset_client()`.
+- `app/scheduler.py`: registriert die beiden neuen Heartbeat-Jobs im
+  Service-Startup, wenn enabled.
+
+### Diagnostics
+- Neues Skript `scripts/cookie_refresh_probe.py` zur empirischen Ermittlung
+  welche amazon.de-URL Cookies rolliert. Logged Names (keine Werte) zum
+  sicheren Copy-Paste in Issues.
+
+### Notes
+- Keine DB-Migration. Settings werden ueber bestehende `settings`-Tabelle
+  persistiert (Keys: `amazon_last_heartbeat`, `amazon_last_heartbeat_status`,
+  `amazon_cookie_expires`).
+- Fully backward-compatible: Wenn `WU_AMAZON_HEARTBEAT_ENABLED=false`, ist
+  alles wie in v0.11.x.
+
 ## [0.11.0] – 2026-05-25
 
 ### Added

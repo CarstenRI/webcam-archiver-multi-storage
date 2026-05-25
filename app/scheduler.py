@@ -93,6 +93,22 @@ def start() -> None:
         id="__timelapse_worker__",
         replace_existing=True,
     )
+    # Amazon-Session-Heartbeat (v0.12.0): haelt session-id/session-token am Leben
+    if settings.amazon_heartbeat_enabled and settings.amazon_heartbeat_minutes > 0:
+        sched.add_job(
+            _amazon_heartbeat_tick,
+            trigger=IntervalTrigger(minutes=max(5, int(settings.amazon_heartbeat_minutes))),
+            id="__amazon_heartbeat__",
+            replace_existing=True,
+        )
+    # Sekundaerer Heartbeat: rolliert ubid-acbde + x-acbde alle 24h (default)
+    if settings.amazon_heartbeat_enabled and settings.amazon_secondary_minutes > 0:
+        sched.add_job(
+            _amazon_secondary_tick,
+            trigger=IntervalTrigger(minutes=max(60, int(settings.amazon_secondary_minutes))),
+            id="__amazon_secondary__",
+            replace_existing=True,
+        )
 
 
 def _daily_cleanup() -> None:
@@ -151,6 +167,24 @@ def _timelapse_worker_tick() -> None:
         _tl.worker_tick()
     except Exception as e:  # noqa: BLE001
         log.exception("timelapse.worker_tick failed: %s", e)
+
+
+def _amazon_heartbeat_tick() -> None:
+    """Primary-Heartbeat (alle 6h default): GET /photos/ -> rotiert session-cookies."""
+    try:
+        from . import amazon_session as _as
+        _as.heartbeat()
+    except Exception as e:  # noqa: BLE001
+        log.exception("amazon_session.heartbeat failed: %s", e)
+
+
+def _amazon_secondary_tick() -> None:
+    """Sekundaer-Heartbeat (alle 24h default): rotiert ubid-acbde + x-acbde."""
+    try:
+        from . import amazon_session as _as
+        _as.secondary_refresh()
+    except Exception as e:  # noqa: BLE001
+        log.exception("amazon_session.secondary_refresh failed: %s", e)
 
 
 def shutdown() -> None:

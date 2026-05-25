@@ -1314,8 +1314,68 @@ def settings_view(request: Request, user: User = Depends(require_auth)):
             "timelapse_retention_per_cam_env": settings.timelapse_retention_per_cam,
             "timelapse_cache_used_bytes": tl_cache_used,
             "timelapse_render_count": tl_render_count,
+            "cookie_health": _cookie_health_for_template(),
+            "amazon_heartbeat_minutes": settings.amazon_heartbeat_minutes,
+            "amazon_heartbeat_enabled": settings.amazon_heartbeat_enabled,
         },
     )
+
+
+def _cookie_health_for_template() -> dict:
+    """Wrap amazon_session.health_summary() with safe fallback for the template."""
+    try:
+        from . import amazon_session as _as
+        return _as.health_summary()
+    except Exception:
+        return {
+            "overall": "unknown", "last_heartbeat": None, "last_status": "",
+            "cookies": [], "expired": [], "warn": [], "missing_required": [],
+        }
+
+
+@app.get("/api/amazon-cookies/health")
+def api_amazon_cookies_health(_: str = Depends(require_auth)):
+    """Liefert das aktuelle Cookie-Health-Aggregat als JSON (fuer Live-Updates)."""
+    from . import amazon_session as _as
+    return _as.health_summary()
+
+
+@app.post("/api/amazon-cookies/heartbeat")
+def api_amazon_cookies_heartbeat(user: User = Depends(require_admin)):
+    """Triggert einen manuellen Primary-Heartbeat (GET /photos/) on demand."""
+    from . import amazon_session as _as
+    result = _as.heartbeat()
+    return {
+        "result": {
+            "ok": result.ok,
+            "status_code": result.status_code,
+            "url": result.url,
+            "rotated": result.rotated,
+            "new": result.new,
+            "message": result.message,
+            "duration_ms": result.duration_ms,
+        },
+        "health": _as.health_summary(),
+    }
+
+
+@app.post("/api/amazon-cookies/secondary")
+def api_amazon_cookies_secondary(user: User = Depends(require_admin)):
+    """Triggert manuell den Sekundaer-Heartbeat (ubid/x-Rotation)."""
+    from . import amazon_session as _as
+    result = _as.secondary_refresh()
+    return {
+        "result": {
+            "ok": result.ok,
+            "status_code": result.status_code,
+            "url": result.url,
+            "rotated": result.rotated,
+            "new": result.new,
+            "message": result.message,
+            "duration_ms": result.duration_ms,
+        },
+        "health": _as.health_summary(),
+    }
 
 
 @app.post("/settings/port")

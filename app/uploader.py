@@ -323,7 +323,40 @@ def upload_file(
             log.warning("Album-Handling-Fehler: %s", e)
             album_status = f"album_error:{e}"[:80]
 
+    # v0.12.0: Cookies vom Lib-internen Client zurueck in die DB schreiben.
+    # Jeder Upload ist potenziell ein Gratis-Cookie-Refresh, weil Amazon
+    # session-id/session-token bei aktiven Requests rolliert. Fehler nur loggen.
+    try:
+        _persist_client_cookies()
+    except Exception as e:
+        log.debug("cookie persist after upload failed: %s", e)
+
     return {"node_id": node_id, "status": "success", "album": album_status}
+
+
+def _persist_client_cookies() -> None:
+    """Liest Cookies vom Lib-internen httpx-Client und merged sie in die DB,
+    wenn sich was geaendert hat. Wird nach jedem erfolgreichen Upload gerufen."""
+    global _client
+    if _client is None:
+        return
+    try:
+        http = getattr(_client, "client", None)
+        jar = getattr(http, "cookies", None) if http else None
+        if jar is None:
+            return
+        from . import amazon_session as _as
+        new_values, new_expires = _as.cookies_from_jar(jar)
+        if not new_values:
+            return
+        existing = _as.load_cookies()
+        # Nur schreiben, wenn sich tatsaechlich was geaendert hat
+        changed = {k: v for k, v in new_values.items() if existing.get(k) != v}
+        if changed:
+            n_rot, n_add = _as.merge_into_db(new_values, new_expires)
+            log.info("amazon-upload: %d cookies rotated, %d added (from lib jar)", n_rot, n_add)
+    except Exception as e:  # noqa: BLE001
+        log.debug("_persist_client_cookies: %s", e)
 
 
 def health_check() -> tuple[bool, str]:

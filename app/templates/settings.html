@@ -393,6 +393,101 @@
     {% endif %}
   </section>
 
+  <section class="card settings-card" id="cookie-health">
+    <header class="card-head">
+      <h3><span class="card-icon">❤️</span> Cookie-Health <small class="muted">(v0.12.0)</small></h3>
+      <small class="muted">Automatischer Heartbeat haelt die Amazon-Session lange am Leben.</small>
+    </header>
+
+    <div id="ch-status" class="ch-status status-{{ cookie_health.overall }}">
+      {% if cookie_health.overall == 'ok' %}
+        <strong>Alle Pflicht-Cookies sind frisch.</strong>
+      {% elif cookie_health.overall == 'warn' %}
+        <strong>Achtung:</strong> ein oder mehrere Cookies laufen demnaechst ab.
+      {% elif cookie_health.overall == 'critical' %}
+        <strong>Manueller Re-Login noetig:</strong>
+        {% if cookie_health.expired %}abgelaufen: <code>{{ cookie_health.expired|join(', ') }}</code>{% endif %}
+        {% if cookie_health.missing_required %}fehlt: <code>{{ cookie_health.missing_required|join(', ') }}</code>{% endif %}
+      {% else %}
+        <strong>Unbekannt.</strong> Beim ersten Heartbeat wird der Status aktualisiert.
+      {% endif %}
+    </div>
+
+    <div class="ch-meta muted" id="ch-meta" style="margin-top:8px">
+      Letzter Heartbeat:
+      <span id="ch-last">{{ cookie_health.last_heartbeat or '—' }}</span>
+      &middot; Status: <span id="ch-laststatus">{{ cookie_health.last_status or '—' }}</span>
+      {% if amazon_heartbeat_enabled %}
+        &middot; Intervall: alle {{ amazon_heartbeat_minutes }} Min
+      {% else %}
+        &middot; <span class="cookie-status missing">Heartbeat AUS</span>
+      {% endif %}
+    </div>
+
+    <table class="ch-table" style="margin-top:14px; width:100%; border-collapse:collapse">
+      <thead>
+        <tr style="text-align:left; border-bottom:1px solid #ddd">
+          <th>Cookie</th><th>Status</th><th>Expires</th><th>Restzeit</th>
+        </tr>
+      </thead>
+      <tbody id="ch-tbody">
+      {% for c in cookie_health.cookies %}
+        <tr data-cookie="{{ c.name }}" style="border-bottom:1px solid #eee">
+          <td><code>{{ c.name }}</code>{% if c.required %} <span class="required">*</span>{% endif %}</td>
+          <td>
+            {% if c.status == 'ok' %}<span class="cookie-status ok">✓ frisch</span>
+            {% elif c.status == 'warn' %}<span class="cookie-status missing" style="background:#fff3cd; color:#856404">⚠ &lt;24h</span>
+            {% elif c.status == 'expired' %}<span class="cookie-status missing">✗ abgelaufen</span>
+            {% else %}<span class="cookie-status">?</span>
+            {% endif %}
+          </td>
+          <td><small>{{ c.expires_at or '—' }}</small></td>
+          <td>
+            {% if c.seconds_to_expiry is none %}<small class="muted">—</small>
+            {% elif c.seconds_to_expiry > 86400 %}{{ (c.seconds_to_expiry // 86400) }} Tage
+            {% elif c.seconds_to_expiry > 3600 %}{{ (c.seconds_to_expiry // 3600) }} h
+            {% elif c.seconds_to_expiry > 0 %}{{ (c.seconds_to_expiry // 60) }} min
+            {% else %}<span style="color:#a33">abgelaufen</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">Noch keine Cookies hinterlegt.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if current_user.role == 'admin' %}
+    <div class="form-actions" style="margin-top:14px">
+      <button class="btn primary" type="button" onclick="triggerHeartbeat('primary')">
+        Heartbeat jetzt (Primary)
+      </button>
+      <button class="btn ghost" type="button" onclick="triggerHeartbeat('secondary')">
+        Sekundaer-Refresh (ubid/x)
+      </button>
+      <span id="ch-feedback" class="muted" style="margin-left:8px"></span>
+    </div>
+    {% endif %}
+
+    <details style="margin-top:14px">
+      <summary><strong>Wie funktioniert der Heartbeat?</strong></summary>
+      <p class="muted" style="margin-top:8px">
+        Der Server schickt periodisch eine harmlose GET-Anfrage an <code>amazon.de/photos/</code>
+        mit den aktuellen Session-Cookies. Amazon liefert dabei frische Werte fuer
+        <code>session-id</code> und <code>session-token</code> zurueck — genauso wie bei einem
+        normalen Browser-Besuch. Das verhindert, dass die Kurzlauf-Cookies nach 24-72h
+        ablaufen. Der laenger lebende <code>at-acbde</code>-Cookie wird vom Server <em>nie</em>
+        rolliert (nur beim Login gesetzt) — wenn der ablaeuft, hilft nur ein manueller Re-Login
+        ueber den oberen Bereich.
+      </p>
+      <p class="muted">
+        Zusaetzlich aktualisiert jeder erfolgreiche Webcam-Upload die Cookies kostenlos:
+        wenn Amazon im Upload-Response neue Werte mitschickt, werden sie sofort in der DB
+        gemerged.
+      </p>
+    </details>
+  </section>
+
   <section class="card settings-card" id="wartung">
     <header class="card-head">
       <h3><span class="card-icon">🛠</span> Wartung</h3>
@@ -522,6 +617,28 @@ function clearAllCookieFields() {
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
 })();
+</script>
+
+<script>
+function triggerHeartbeat(kind) {
+  var url = kind === 'secondary'
+    ? '/api/amazon-cookies/secondary'
+    : '/api/amazon-cookies/heartbeat';
+  var fb = document.getElementById('ch-feedback');
+  fb.textContent = 'läuft…';
+  fetch(url, { method: 'POST', credentials: 'same-origin' })
+    .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, j: j}; }); })
+    .then(function(res) {
+      if (!res.ok || !res.j.result.ok) {
+        fb.textContent = '✗ ' + (res.j.result && res.j.result.message || 'Fehler');
+        return;
+      }
+      var r = res.j.result;
+      fb.textContent = '✓ ' + r.status_code + ' · ' + r.rotated.length +
+                       ' rotated · ' + r.duration_ms + ' ms';
+      setTimeout(function() { location.reload(); }, 700);
+    }).catch(function(e) { fb.textContent = '✗ ' + e.message; });
+}
 </script>
 
 {% endblock %}

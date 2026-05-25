@@ -17,8 +17,6 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
     base_url: str = "http://localhost:8080"
-    # Pfad zur .env-Datei, die systemd via EnvironmentFile liest.
-    # Wird von der Settings-UI fuer Port-Aenderungen geschrieben.
     env_file_path: Path = Path("/etc/webcam-uploader/.env")
 
     # Auth
@@ -37,22 +35,25 @@ class Settings(BaseSettings):
     max_concurrent_fetches: int = 5
 
     # Timelapse (v0.10.0)
-    # Globaler Cache-Cap fuer gerenderte Videos unter data_dir/timelapse/.
-    # Wenn ueberschritten, werden aelteste Renderings beim taeglichen Cleanup geloescht.
     timelapse_cache_max_gb: int = 5
-    # Max Anzahl persistent gespeicherter Renderings pro Cam.
     timelapse_retention_per_cam: int = 10
-    # Pruefintervall des Worker-Polls in Sekunden (klein halten fuer UX).
     timelapse_worker_interval_s: int = 5
 
     # Thumbnails (v0.11.0)
-    # WebP-Thumbnails der Frames werden unter data_dir/thumbs/cam-{id}/{upload_id}.webp
-    # gecacht, synchron beim Upload + lazy on-demand. Wenn der Cache > Cap MB,
-    # raeumt der Daily-Cleanup die aeltesten (mtime) WebP-Files raus.
     thumbnail_cache_max_mb: int = 500
     thumbnail_width: int = 640
     thumbnail_height: int = 360
     thumbnail_webp_quality: int = 80
+
+    # Amazon-Session-Heartbeat (v0.12.0)
+    # Primary-Heartbeat (GET /photos/) alle X Minuten.
+    # Rotiert session-id+session-token, haelt Session lange am Leben.
+    amazon_heartbeat_minutes: int = 360  # 6h
+    # Sekundaer-Heartbeat (GET /your-account/*) alle X Minuten.
+    # Rotiert zusaetzlich ubid-acbde + x-acbde.
+    amazon_secondary_minutes: int = 1440  # 24h
+    # 0 = Heartbeats ausgeschaltet
+    amazon_heartbeat_enabled: bool = True
 
     @property
     def timelapse_dir(self) -> Path:
