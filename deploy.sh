@@ -48,7 +48,9 @@ scp "${SSH_OPTS[@]}" "$BUNDLE" "$REMOTE:/tmp/webcam-uploader-install.sh"
 
 echo
 echo "==> Installiere/Update auf $REMOTE …"
-ssh "${SSH_OPTS[@]}" "$REMOTE" 'sudo bash /tmp/webcam-uploader-install.sh'
+# -t allokiert ein TTY, damit sudo nach dem Passwort fragen kann, falls
+# der Remote-Account kein NOPASSWD-sudoers-Eintrag hat (auf .142 der Fall).
+ssh -t "${SSH_OPTS[@]}" "$REMOTE" 'sudo bash /tmp/webcam-uploader-install.sh'
 
 echo
 echo "✓ Deploy fertig."

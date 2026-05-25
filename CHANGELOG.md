@@ -5,6 +5,52 @@ Alle nennenswerten Änderungen an diesem Projekt sind hier dokumentiert.
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.11.0] – 2026-05-25
+
+### Added
+- **Server-seitiger Thumbnail-Cache fuer die Timelapse-Slideshow.** Jedes
+  Frame wird beim Upload zusaetzlich als WebP 640x360 qual 80 unter
+  `data_dir/thumbs/cam-{cam_id}/{upload_id}.webp` abgelegt (typisch 30-60 KB
+  statt 1-3 MB Original-JPG). Der Slideshow-Player zieht standardmaessig
+  die Thumbs, sodass FPS>1 jetzt fluessig laeuft. MP4-Rendering liest
+  weiterhin die Originale, also keine Qualitaetsverschlechterung im Export.
+- Neuer Modul `app/thumbnails.py` mit `ensure`, `generate`, `delete`,
+  `evict_to_cap`, `prune_orphans`.
+- Frame-Endpoint akzeptiert `?thumb=1` (lazy-generiert beim ersten Zugriff
+  fuer historische Frames vor dem Upgrade). Antwort hat
+  `Cache-Control: public, max-age=86400`.
+- Frame-Listen-Endpoint liefert pro Frame zusaetzlich `thumb_url`.
+- Neue Settings: `WU_THUMBNAIL_CACHE_MAX_MB` (default 500),
+  `WU_THUMBNAIL_WIDTH` (640), `WU_THUMBNAIL_HEIGHT` (360),
+  `WU_THUMBNAIL_WEBP_QUALITY` (80).
+
+### Changed
+- **Slideshow-Player** (`app/static/timelapse.js`): nutzt `thumb_url` statt
+  Original-Frame. Lookahead PRELOAD_AHEAD von 5 auf 18 erhoeht und
+  PRELOAD_CACHE_MAX von 60 auf 120, da Thumbs <50 KB pro Stueck.
+  Faellt safe auf `url` zurueck, wenn der Server kein `thumb_url`
+  liefert (Pre-v0.11.0-Server, alte Page-Cache).
+- **Daily-Cleanup**: zusaetzlich Thumb-Orphan-Prune (Thumbs ohne lebende
+  TargetUpload-Row) + LRU-Eviction wenn ueber Cap. Loggt
+  `thumbnail cleanup: orphans=N evicted=N freed=K KB cache=K KB`.
+- **Prune-Path** (`_prune_target_for_cam`): loescht bei einem Retention-Prune
+  das zugehoerige Thumbnail mit.
+
+### Files
+- new `app/thumbnails.py` (250 Zeilen)
+- modified `app/config.py` (Thumbnail-Settings + ensure_dirs)
+- modified `app/scheduler.py` (ensure() nach Local-Upload, delete() im Prune,
+  `_thumbnail_cleanup` im Daily)
+- modified `app/main.py` (?thumb=1 + thumb_url)
+- modified `app/static/timelapse.js` (thumb_url, Lookahead 18)
+- modified `app/__init__.py` (0.11.0)
+- modified `deploy.sh` (ssh -t fuer sudo-Passwort-Prompt auf .142)
+
+### Notes
+- Keine DB-Migration. Cache ist filesystem-basiert und idempotent.
+- Bestehende Frames (vor v0.11.0 hochgeladen) bekommen ihren Thumb beim
+  ersten Slideshow-Aufruf — der `?thumb=1`-Endpoint generiert lazy.
+
 ## [0.10.2] – 2026-05-25
 
 ### Fixed

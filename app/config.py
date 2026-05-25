@@ -45,9 +45,22 @@ class Settings(BaseSettings):
     # Pruefintervall des Worker-Polls in Sekunden (klein halten fuer UX).
     timelapse_worker_interval_s: int = 5
 
+    # Thumbnails (v0.11.0)
+    # WebP-Thumbnails der Frames werden unter data_dir/thumbs/cam-{id}/{upload_id}.webp
+    # gecacht, synchron beim Upload + lazy on-demand. Wenn der Cache > Cap MB,
+    # raeumt der Daily-Cleanup die aeltesten (mtime) WebP-Files raus.
+    thumbnail_cache_max_mb: int = 500
+    thumbnail_width: int = 640
+    thumbnail_height: int = 360
+    thumbnail_webp_quality: int = 80
+
     @property
     def timelapse_dir(self) -> Path:
         return self.data_dir / "timelapse"
+
+    @property
+    def thumbnail_dir(self) -> Path:
+        return self.data_dir / "thumbs"
 
     @property
     def db_path(self) -> Path:
@@ -62,6 +75,7 @@ class Settings(BaseSettings):
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         self.timelapse_dir.mkdir(parents=True, exist_ok=True)
         (self.timelapse_dir / "tmp").mkdir(parents=True, exist_ok=True)
+        self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

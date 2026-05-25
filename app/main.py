@@ -540,6 +540,7 @@ def api_timelapse_frames(
                     "id": f.upload_id,
                     "ts": f.ts.isoformat(),
                     "url": f"/api/cams/{cam_id}/timelapse/frame/{f.upload_id}",
+                    "thumb_url": f"/api/cams/{cam_id}/timelapse/frame/{f.upload_id}?thumb=1",
                 }
                 for f in page_frames
             ],
@@ -548,9 +549,15 @@ def api_timelapse_frames(
 
 @app.get("/api/cams/{cam_id}/timelapse/frame/{upload_id}")
 def api_timelapse_frame(
-    cam_id: int, upload_id: int, _: str = Depends(require_auth),
+    cam_id: int, upload_id: int,
+    thumb: int = 0,
+    _: str = Depends(require_auth),
 ):
-    """Streamt das JPEG eines konkreten Frames. Validiert cam-Zuordnung."""
+    """Streamt einen Frame. ?thumb=1 liefert das WebP-Thumbnail (v0.11.0).
+
+    Wenn das Thumbnail noch nicht gecached ist, wird es on-demand erzeugt
+    (lazy). Faellt bei Fehler still auf das Original-Bild zurueck.
+    """
     with SessionLocal() as s:
         tu = s.get(TargetUpload, upload_id)
         if tu is None or tu.cam_id != cam_id:
@@ -560,6 +567,20 @@ def api_timelapse_frame(
         path = Path(tu.remote_ref)
         if not path.is_file():
             raise HTTPException(404, "Datei fehlt auf der Disk")
+
+        if thumb:
+            try:
+                from . import thumbnails as _tn
+                thumb_path = _tn.ensure(path, cam_id, upload_id)
+            except Exception:
+                thumb_path = None
+            if thumb_path and thumb_path.is_file():
+                return FileResponse(
+                    str(thumb_path), media_type="image/webp",
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
+            # Fallback: Original ausliefern, damit der Player nicht weiss-bleibt.
+
         suffix = path.suffix.lower()
         mime = {
             ".jpg": "image/jpeg", ".jpeg": "image/jpeg",

@@ -1,4 +1,4 @@
-/* Timelapse-Player (v0.10.2)
+/* Timelapse-Player (v0.11.0)
  *
  * Aufgaben:
  *  1) Vorschau-Slideshow: Holt eine Frame-Liste vom Backend, swappt das <img>
@@ -7,6 +7,9 @@
  *     v0.10.2: Async-Preloader (Lookahead-Cache + img.decode()) +
  *     rAF-basierter Tick. Verhindert das alte Symptom „Scrub-Bar laeuft
  *     mehrfach durch, aber das Bild bleibt stehen".
+ *     v0.11.0: Player zieht standardmaessig server-cached WebP-Thumbs
+ *     (thumb_url, 640x360, ~40 KB) statt Original-JPGs (1-3 MB). Lookahead
+ *     auf 18 erhoeht, weil die Thumbs billig genug sind.
  *  2) Render-Form: POST nach /api/cams/{id}/timelapse/render, danach 2s-Polling
  *     gegen /api/timelapse/jobs/{job_id}, UI-Update der Job-Tabelle.
  *  3) Job-Loesch-Bestaetigung mit Fetch-Patch fuer SPA-Feeling.
@@ -47,8 +50,8 @@
   if (!elLoadBtn) return; // Cam hat kein Local-Target — Tab zeigt Info-Card
 
   // --- State ---
-  var PRELOAD_AHEAD = 5;          // wie viele Frames vorausschauend laden
-  var PRELOAD_CACHE_MAX = 60;     // hartes Limit fuer Speicher-Footprint
+  var PRELOAD_AHEAD = 18;         // wie viele Frames vorausschauend laden (v0.11.0: Thumbs sind billig)
+  var PRELOAD_CACHE_MAX = 120;    // hartes Limit fuer Speicher-Footprint (Thumbs <50 KB)
   var state = {
     frames: [],
     page: 1,
@@ -136,7 +139,9 @@
     if (hit) return hit;
     var img = new Image();
     img.decoding = 'async';
-    img.src = f.url;
+    // v0.11.0: Slideshow nutzt server-cached Thumbs. Faellt auf Original zurueck,
+    // wenn das Backend kein thumb_url liefert (Pre-v0.11.0-Server).
+    img.src = f.thumb_url || f.url;
     // Promise auf decode() — Browser ohne decode() (sehr alt) fallen auf onload zurueck.
     var ready;
     if (typeof img.decode === 'function') {

@@ -96,7 +96,7 @@ def start() -> None:
 
 
 def _daily_cleanup() -> None:
-    """Sammelt alle taeglichen Cleanup-Schritte (v0.10.0)."""
+    """Sammelt alle taeglichen Cleanup-Schritte (v0.10.0+)."""
     try:
         cleanup_old_fetches()
     except Exception as e:  # noqa: BLE001
@@ -106,6 +106,42 @@ def _daily_cleanup() -> None:
         _tl.cleanup_cache()
     except Exception as e:  # noqa: BLE001
         log.exception("timelapse.cleanup_cache failed: %s", e)
+    # v0.11.0: Thumbnail-Cache aufraeumen (Orphans + LRU-Eviction).
+    try:
+        _thumbnail_cleanup()
+    except Exception as e:  # noqa: BLE001
+        log.exception("thumbnail cleanup failed: %s", e)
+
+
+def _thumbnail_cleanup() -> None:
+    """Orphans loeschen (Thumbs ohne lebende TargetUpload-Row) und auf Cap evicten."""
+    from . import thumbnails as _tn
+    # 1) Valid keys aus DB: alle nicht-pruned successful Uploads auf local-Targets.
+    with SessionLocal() as s:
+        rows = (
+            s.query(TargetUpload.cam_id, TargetUpload.id)
+            .join(StorageTarget, TargetUpload.storage_target_id == StorageTarget.id)
+            .filter(
+                StorageTarget.type == "local",
+                TargetUpload.cam_id.isnot(None),
+                TargetUpload.pruned_at.is_(None),
+                TargetUpload.status == "success",
+            )
+            .all()
+        )
+    valid = {(cid, uid) for cid, uid in rows if cid is not None}
+    orphans = _tn.prune_orphans(valid)
+    # 2) LRU-Eviction wenn ueber Cap.
+    cap_mb = max(0, int(settings.thumbnail_cache_max_mb))
+    evict = _tn.evict_to_cap(cap_mb * 1024 * 1024) if cap_mb > 0 else {
+        "removed": 0, "freed_bytes": 0, "total_before": 0, "total_after": 0,
+    }
+    log.info(
+        "thumbnail cleanup: orphans=%d evicted=%d freed=%d KB cache=%d KB",
+        orphans, evict.get("removed", 0),
+        evict.get("freed_bytes", 0) // 1024,
+        evict.get("total_after", 0) // 1024,
+    )
 
 
 def _timelapse_worker_tick() -> None:
@@ -269,6 +305,14 @@ def _prune_target_for_cam(s, target: StorageTarget, cam_id: int) -> int:
         if not ok:
             # trotzdem als pruned markieren, damit wir es nicht ewig retryen
             tu.message = ((tu.message or "") + f" | prune: {msg}")[:500]
+        # Thumbnail mitloeschen (v0.11.0). Nur lokal — fuer remote-Targets gibt's keinen.
+        if target.type == "local" and tu.cam_id and tu.id:
+            try:
+                from . import thumbnails as _tn
+                _tn.delete(tu.cam_id, tu.id)
+            except Exception as e:
+                log.warning("Thumbnail-Delete im Prune fail %s/%s: %s",
+                            tu.cam_id, tu.id, e)
         s.commit()
         pruned += 1
     if pruned:
@@ -372,6 +416,15 @@ def run_cam(cam_id: int) -> None:
                 target.last_status_msg = (res.message or "")[:500]
                 target.last_status_at = datetime.utcnow()
                 s.commit()
+                # Thumbnail-Cache fuer local-Targets erzeugen (v0.11.0).
+                # Fehler nur loggen — Upload bleibt erfolgreich.
+                if res.status == "success" and target.type == "local" and tu.remote_ref:
+                    try:
+                        from . import thumbnails as _tn
+                        _tn.ensure(tu.remote_ref, cam.id, tu.id)
+                    except Exception as e:
+                        log.warning("Thumbnail-ensure fehlgeschlagen %s/%s: %s",
+                                    cam.name, tu.id, e)
                 # Retention-Policy anwenden, wenn Upload erfolgreich war
                 if res.status == "success":
                     try:
