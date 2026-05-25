@@ -1,9 +1,12 @@
-/* Timelapse-Player (v0.10.0)
+/* Timelapse-Player (v0.10.2)
  *
  * Aufgaben:
  *  1) Vorschau-Slideshow: Holt eine Frame-Liste vom Backend, swappt das <img>
  *     im FPS-Takt, Scrub-Bar, Prev/Next. Lazy-Loading: zieht weitere Pages
  *     nach, wenn die aktuelle Seite ueber 80% durchgespielt ist.
+ *     v0.10.2: Async-Preloader (Lookahead-Cache + img.decode()) +
+ *     rAF-basierter Tick. Verhindert das alte Symptom „Scrub-Bar laeuft
+ *     mehrfach durch, aber das Bild bleibt stehen".
  *  2) Render-Form: POST nach /api/cams/{id}/timelapse/render, danach 2s-Polling
  *     gegen /api/timelapse/jobs/{job_id}, UI-Update der Job-Tabelle.
  *  3) Job-Loesch-Bestaetigung mit Fetch-Patch fuer SPA-Feeling.
@@ -44,6 +47,8 @@
   if (!elLoadBtn) return; // Cam hat kein Local-Target — Tab zeigt Info-Card
 
   // --- State ---
+  var PRELOAD_AHEAD = 5;          // wie viele Frames vorausschauend laden
+  var PRELOAD_CACHE_MAX = 60;     // hartes Limit fuer Speicher-Footprint
   var state = {
     frames: [],
     page: 1,
@@ -52,8 +57,12 @@
     fetching: false,
     idx: 0,
     playing: false,
-    timer: null,
-    fps: parseInt(elFps.value, 10) || 15
+    rafId: null,
+    lastTickTs: 0,                // performance.now() des letzten Frame-Advances
+    pendingAdvance: false,        // true = naechster Frame ist gerade am Decoden
+    waitingForMore: false,        // true = Ende erreicht, warten auf Nachlade-Page
+    fps: parseInt(elFps.value, 10) || 15,
+    preload: new Map()            // upload_id -> {img: HTMLImageElement, ready: Promise<void>}
   };
 
   function fmtTs(iso) {
@@ -85,7 +94,6 @@
       return;
     }
     elSourceInfo.textContent = c + ' Bilder · ' + fmtTs(first) + ' – ' + fmtTs(last);
-    // Defaults fuer Date-Range setzen, falls leer
     if (!elFrom.value && first) elFrom.value = first.slice(0, 16);
     if (!elTo.value && last) elTo.value = last.slice(0, 16);
   }
@@ -97,10 +105,7 @@
     elFps.addEventListener('input', function() {
       state.fps = parseInt(elFps.value, 10) || 15;
       elFpsVal.textContent = state.fps;
-      if (state.playing) {
-        stopPlayback();
-        startPlayback();
-      }
+      // FPS-Aenderung wirkt sofort auf den naechsten Tick (rAF-Loop liest state.fps).
     });
   }
 
@@ -110,7 +115,6 @@
     if (src) p.set('source_target_id', src);
     if (elFrom.value) p.set('from', elFrom.value);
     if (elTo.value) p.set('to', elTo.value);
-    // Wochentage als 7-Bit-String einsammeln
     var bits = '';
     var wdInputs = document.querySelectorAll('#tl-weekdays input[type=checkbox]');
     wdInputs.forEach(function(cb) { bits += cb.checked ? '1' : '0'; });
@@ -118,6 +122,47 @@
     if (elTimeStart.value) p.set('time_start', elTimeStart.value);
     if (elTimeEnd.value) p.set('time_end', elTimeEnd.value);
     return p;
+  }
+
+  // --- Preloader -----------------------------------------------------------
+  // Holt das Bild ueber ein detached Image() in den Browser-Cache und decodiert
+  // es bereits. Beim Anzeigen im sichtbaren <img> ist das Bild dann „warm" und
+  // wird ohne Flicker getauscht.
+
+  function preload(idx) {
+    if (idx < 0 || idx >= state.frames.length) return null;
+    var f = state.frames[idx];
+    var hit = state.preload.get(f.id);
+    if (hit) return hit;
+    var img = new Image();
+    img.decoding = 'async';
+    img.src = f.url;
+    // Promise auf decode() — Browser ohne decode() (sehr alt) fallen auf onload zurueck.
+    var ready;
+    if (typeof img.decode === 'function') {
+      ready = img.decode().catch(function() { /* defekte Frames nicht durchreichen */ });
+    } else {
+      ready = new Promise(function(res) {
+        img.onload = res;
+        img.onerror = res;
+      });
+    }
+    var entry = { img: img, ready: ready };
+    state.preload.set(f.id, entry);
+    // LRU-Evict: behalte nur die letzten PRELOAD_CACHE_MAX Eintraege.
+    if (state.preload.size > PRELOAD_CACHE_MAX) {
+      var firstKey = state.preload.keys().next().value;
+      state.preload.delete(firstKey);
+    }
+    return entry;
+  }
+
+  function ensureLookahead(centerIdx) {
+    for (var k = 0; k <= PRELOAD_AHEAD; k++) {
+      preload(centerIdx + k);
+    }
+    // Auch ein Frame zurueck, damit Prev-Step ebenfalls smooth bleibt.
+    preload(centerIdx - 1);
   }
 
   function loadPage(page, append) {
@@ -144,21 +189,23 @@
       } else {
         state.frames = j.frames || [];
         state.idx = 0;
+        state.preload.clear(); // neuer Frame-Satz → alter Cache nutzlos
       }
       if (elLoadInfo) {
         elLoadInfo.textContent = state.frames.length + ' / ' + (j.total || state.frames.length)
           + ' Frames geladen' + (state.hasMore ? ' (weitere folgen)' : '');
       }
       if (state.frames.length === 0) {
-        if (elEmpty) {
-          elEmpty.style.display = 'flex';
-          elEmpty.textContent = 'Keine Frames im gewählten Zeitraum.';
-        }
-        if (elImage) elImage.removeAttribute('src');
+        showEmpty('Keine Frames im gewählten Zeitraum.');
       } else {
-        if (elEmpty) elEmpty.style.display = 'none';
+        hideEmpty();
         elScrub.max = state.frames.length - 1;
-        if (!append) showFrame(0);
+        if (!append) {
+          showFrame(0);
+        } else if (state.waitingForMore) {
+          // Wir hingen am alten Ende — jetzt geht's weiter.
+          state.waitingForMore = false;
+        }
         elCounter.textContent = state.frames.length + (j.total > state.frames.length ? ' / ' + j.total : '');
       }
     }).catch(function(e) {
@@ -168,45 +215,106 @@
     });
   }
 
+  function showEmpty(msg) {
+    if (elEmpty) {
+      elEmpty.style.display = 'flex';
+      if (msg) elEmpty.textContent = msg;
+    }
+    if (elImage) {
+      elImage.removeAttribute('src');
+      elImage.style.display = 'none';
+    }
+  }
+
+  function hideEmpty() {
+    if (elEmpty) elEmpty.style.display = 'none';
+    if (elImage) elImage.style.display = 'block';
+  }
+
+  // Zeigt Frame i an. Synchroner UI-Update fuer Scrubber/Counter; das Bild
+  // wird tatsaechlich erst nach img.decode() in das sichtbare <img> uebernommen.
+  // Returns Promise, die resolved sobald das Pixel-Update stattgefunden hat.
   function showFrame(i) {
-    if (!state.frames.length) return;
+    if (!state.frames.length) return Promise.resolve();
     i = Math.max(0, Math.min(state.frames.length - 1, i));
     state.idx = i;
     var f = state.frames[i];
-    if (elImage) {
-      elImage.src = f.url;
-      elImage.style.display = 'block';
-    }
     if (elTs) elTs.textContent = fmtTs(f.ts);
     if (elScrub) elScrub.value = i;
     if (elCounter) elCounter.textContent = (i+1) + ' / ' + state.frames.length;
-    // Lazy-Load: wenn 80% durch und has_more, naechste Seite holen
+    if (elImage) elImage.style.display = 'block';
+    ensureLookahead(i);
+
+    // Lazy-Page-Load
     if (state.hasMore && !state.fetching && i / state.frames.length > 0.8) {
       loadPage(state.page + 1, true);
     }
+
+    var entry = preload(i);
+    if (!entry) return Promise.resolve();
+    return entry.ready.then(function() {
+      // Nur ans <img> binden, wenn der User in der Zwischenzeit nicht weitergesprungen
+      // ist (z.B. wenn das Decoden langsam war und schon der naechste Tick lief).
+      if (state.idx === i && elImage) {
+        elImage.src = entry.img.src;
+      }
+    });
+  }
+
+  // --- Playback-Loop (rAF) -------------------------------------------------
+
+  function tick(ts) {
+    if (!state.playing) return;
+    var interval = Math.max(20, Math.floor(1000 / state.fps));
+    if (!state.lastTickTs) state.lastTickTs = ts;
+    var elapsed = ts - state.lastTickTs;
+
+    // Nur weiterschalten, wenn (a) der Intervall abgelaufen ist UND
+    // (b) der vorige Frame bereits decoded ist (sonst staut sich der Decoder).
+    if (elapsed >= interval && !state.pendingAdvance) {
+      var nxt = state.idx + 1;
+      if (nxt >= state.frames.length) {
+        if (state.hasMore) {
+          // Auf Nachschub warten — Lazy-Load lief bereits an.
+          state.waitingForMore = true;
+          if (!state.fetching) loadPage(state.page + 1, true);
+        } else {
+          nxt = 0; // Loop von vorn
+        }
+      }
+      if (!state.waitingForMore) {
+        state.pendingAdvance = true;
+        state.lastTickTs = ts;
+        showFrame(nxt).then(function() {
+          state.pendingAdvance = false;
+        });
+      } else if (!state.fetching) {
+        // Stuck — kein Nachladen mehr aktiv, also doch loopen.
+        state.waitingForMore = false;
+        state.pendingAdvance = true;
+        state.lastTickTs = ts;
+        showFrame(0).then(function() {
+          state.pendingAdvance = false;
+        });
+      }
+    }
+    state.rafId = window.requestAnimationFrame(tick);
   }
 
   function startPlayback() {
     if (state.playing || !state.frames.length) return;
     state.playing = true;
+    state.lastTickTs = 0;
+    state.pendingAdvance = false;
+    state.waitingForMore = false;
     if (elPlay) elPlay.textContent = '⏸';
-    var interval = Math.max(20, Math.floor(1000 / state.fps));
-    state.timer = setInterval(function() {
-      var nxt = state.idx + 1;
-      if (nxt >= state.frames.length) {
-        if (state.hasMore) {
-          // warten — naechste Page kommt automatisch via Lazy-Load oder Stop
-          return;
-        }
-        nxt = 0; // Loop
-      }
-      showFrame(nxt);
-    }, interval);
+    state.rafId = window.requestAnimationFrame(tick);
   }
 
   function stopPlayback() {
     state.playing = false;
-    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    if (state.rafId) { window.cancelAnimationFrame(state.rafId); state.rafId = null; }
+    state.pendingAdvance = false;
     if (elPlay) elPlay.textContent = '▶';
   }
 
@@ -234,13 +342,12 @@
     else if (e.key === 'ArrowRight') { stopPlayback(); showFrame(state.idx + 1); }
   });
 
-  // --- Render-Form ---
+  // --- Render-Form ---------------------------------------------------------
   if (elRenderBtn && !elRenderBtn.disabled) {
     elRenderBtn.addEventListener('click', function() {
       if (!state.frames.length && !confirm('Es sind noch keine Frames geladen. Trotzdem rendern (mit aktuellen Filter-Werten)?')) {
         return;
       }
-      var qs = buildFiltersQS();
       var body = {
         source_target_id: parseInt(elSource.value, 10) || null,
         from: elFrom.value,
@@ -295,7 +402,6 @@
           updateJobRow(j);
           if (j.status === 'done' || j.status === 'error') {
             clearInterval(interval);
-            // Nach Erfolg: page reload, damit der Job in der Tabelle erscheint
             if (j.status === 'done') {
               setTimeout(function() { location.reload(); }, 600);
             }
@@ -318,7 +424,6 @@
         elRenderInfo.textContent = '✗ Render-Fehler: ' + (j.error_message || 'unbekannt');
       }
     }
-    // Inline-Update einer existierenden Job-Row
     var row = document.querySelector('tr[data-job-id="' + j.job_id + '"]');
     if (row) {
       row.dataset.jobStatus = j.status;

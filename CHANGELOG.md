@@ -5,6 +5,41 @@ Alle nennenswerten Änderungen an diesem Projekt sind hier dokumentiert.
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.10.2] – 2026-05-25
+
+### Fixed
+- **Timelapse-Vorschau: Slideshow zeigt jetzt zuverlaessig die Bilder.**
+  Bisher konnte es passieren, dass der Scrub-Balken mehrfach durchlief, ohne
+  dass das angezeigte Frame wechselte. Zwei zusammenwirkende Ursachen:
+  - **Race-Condition im Frame-Swap**: Bei hoeheren FPS (15+) wurde
+    `<img>.src` ueberholt, bevor der Browser das vorige Bild dekodiert hatte.
+    Der Decoder verwarf nicht mehr aktuelle Frames und das `<img>` blieb
+    optisch stehen, obwohl die State-Variablen weiterliefen.
+  - **CSS-Layout-Konflikt**: Das Empty-Overlay (`.tl-stage-empty`) war ein
+    normales Flex-Item neben dem `<img>`, statt es zu ueberlagern. Je nach
+    Zustand konnte das Image-Element auf 0px schrumpfen.
+- **Loop am Ende einer Page**: bei `has_more=true` und letztem Frame der
+  geladenen Page lief der Timer leer (immer nur `return`), bis Nachladen
+  fertig war. Jetzt wird der Page-Load proaktiv getriggert und der Loop
+  setzt erst aus, wenn wirklich nichts mehr nachkommt.
+
+### Changed
+- Neuer Slideshow-Player in `app/static/timelapse.js`:
+  - **Preload-Cache** (LRU, max. 60 Eintraege) mit Lookahead PRELOAD_AHEAD=5
+    Frames; jeder Eintrag durchlaeuft `img.decode()` und ist erst dann
+    swap-bereit.
+  - **rAF-basierter Tick** statt `setInterval` — robust gegen Browser-Throttling
+    in inaktiven Tabs.
+  - FPS-Slider greift jetzt sofort beim naechsten Tick, ohne Stop/Start des
+    Timers.
+- `.tl-stage-empty` ist jetzt `position:absolute; inset:0; pointer-events:none`
+  — echtes Overlay, das das `<img>` nicht mehr verdraengt.
+
+### Files
+- modified `app/static/timelapse.js` (Komplett-Rewrite des Player-Teils)
+- modified `app/static/style.css` (`.tl-stage img`, `.tl-stage-empty`)
+- modified `app/__init__.py` (0.10.1 → 0.10.2)
+
 ## [0.10.1] – 2026-05-12
 
 ### Changed
