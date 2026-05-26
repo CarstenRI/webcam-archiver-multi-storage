@@ -5,6 +5,37 @@ Alle nennenswerten Änderungen an diesem Projekt sind hier dokumentiert.
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.12.1] – 2026-05-26
+
+### Fixed
+- **Cookie-Health-Banner zeigte faelschlich "alle frisch", obwohl Uploads
+  bereits 401 zogen.** Ursache: das Banner bewertete nur Cookie-TTLs aus dem
+  Heartbeat-Set-Cookie-Header. Der `at-acbde`-Cookie wird aber von Amazon
+  niemals serverseitig rolliert — sein Status blieb dauerhaft `unknown`
+  und zaehlte als unproblematisch, selbst wenn der Cookie laengst abgelaufen
+  war. Beobachtet 2026-05-26: amazon-only Cams gingen reihenweise in
+  `upload_error`, Banner blieb gruen.
+
+### Added
+- **Ground-Truth-Signal fuer das Cookie-Health-Banner**: der uploader
+  persistiert ab jetzt jeden 401/403 von Amazon als
+  `amazon_last_upload_error` (DB-Setting mit Timestamp, status_code,
+  message). `health_summary()` liest das und schaltet das Banner hart
+  auf `critical`, wenn innerhalb der letzten 30 Min ein 401/403 gesehen
+  wurde — unabhaengig davon, was die Cookie-TTL-Heuristik sagt.
+- **Banner-Text macht das Problem konkret**: zeigt jetzt z.B.
+  "Letzter Upload-Versuch endete mit 401 vor 3 Min. — vermutlich ist
+  at-acbde abgelaufen, bitte frische Cookies eintragen." statt der
+  generischen "Manueller Re-Login noetig"-Meldung.
+- `record_upload_error()`, `clear_upload_error()`, `recent_upload_error()`
+  in `app/amazon_session.py` als oeffentliche Helfer.
+
+### Changed
+- `_mark_cookies_expired()` in `uploader.py` schreibt zusaetzlich den
+  persistenten DB-Eintrag. `_clear_skip_mode()` cleared ihn wieder —
+  sobald frische Cookies via `/settings` gespeichert werden, springt das
+  Banner sofort auf gruen (statt erst nach Ablauf des 30-Min-Fensters).
+
 ## [0.12.0] – 2026-05-25
 
 ### Added

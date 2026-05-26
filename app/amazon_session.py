@@ -51,6 +51,13 @@ USER_AGENT = (
 LAST_HEARTBEAT_KEY = "amazon_last_heartbeat"   # ISO-Timestamp
 LAST_HEARTBEAT_STATUS_KEY = "amazon_last_heartbeat_status"  # "ok"/"fail:<msg>"
 COOKIE_EXPIRES_KEY = "amazon_cookie_expires"   # JSON: {name: iso_expires}
+LAST_UPLOAD_ERROR_KEY = "amazon_last_upload_error"  # JSON: {ts, status_code, message} (v0.12.1)
+
+# Wie lange ein persistierter Upload-Fehler das Banner triggern darf (in Minuten).
+# Default deckt > Skip-Mode-Dauer ab, damit das Banner laenger sichtbar bleibt als der
+# in-process Skip-Mode, aber sich automatisch verabschiedet falls clear_upload_error
+# nicht aufgerufen wurde.
+RECENT_UPLOAD_ERROR_WINDOW_MIN = 30
 
 # Mindest-TTL-Hinweise (Heuristik fuer Health-UI; Amazon kommuniziert sie nicht):
 # - session-id / session-token: kurz (Stunden bis 1-2 Tage), durch Heartbeat erneuert
@@ -289,6 +296,85 @@ def _record_status(result: HeartbeatResult) -> None:
         log.debug("_record_status: %s", e)
 
 
+# ----- Upload-Error-Tracking (v0.12.1) ---------------------------------------
+# Ground-Truth-Signal fuers Health-Banner: wenn der uploader gerade 401 von Amazon
+# bekommen hat, ist das die belastbarste Information ueber den Session-Zustand —
+# wertvoller als jede Cookie-TTL-Heuristik. Wird vom uploader.py beim Setzen des
+# in-process Skip-Mode persistiert und beim Reset wieder gecleart.
+
+def record_upload_error(
+    status_code: int,
+    message: str,
+    cam_name: Optional[str] = None,
+) -> None:
+    """Persistiert: 'letzter Upload-Versuch endete mit status_code'.
+
+    Wird vom uploader._mark_cookies_expired() aufgerufen. Fehler hier sind nicht
+    fatal (Banner waere dann ungenau, aber Upload-Pfad bleibt intakt).
+    """
+    try:
+        payload = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "status_code": int(status_code),
+            "message": (message or "")[:300],
+            "cam_name": (cam_name or "")[:80] or None,
+        }
+        with SessionLocal() as s:
+            set_setting(s, LAST_UPLOAD_ERROR_KEY, json.dumps(payload))
+    except Exception as e:  # noqa: BLE001
+        log.debug("record_upload_error: %s", e)
+
+
+def clear_upload_error() -> None:
+    """Loescht den persistierten Upload-Fehler.
+
+    Wird vom uploader.reset_client() nach einem manuellen Cookie-Refresh
+    aufgerufen, damit das Banner sofort gruen wird ohne Warten auf den
+    Window-Ablauf.
+    """
+    try:
+        with SessionLocal() as s:
+            set_setting(s, LAST_UPLOAD_ERROR_KEY, "")
+    except Exception as e:  # noqa: BLE001
+        log.debug("clear_upload_error: %s", e)
+
+
+def recent_upload_error(
+    window_minutes: int = RECENT_UPLOAD_ERROR_WINDOW_MIN,
+) -> Optional[dict]:
+    """Liefert den persistierten Upload-Fehler, falls juenger als window_minutes.
+
+    Rueckgabe ergaenzt das gespeicherte Dict um `age_seconds` (int, fuer UI).
+    None wenn nichts gespeichert, ungueltig, oder ausserhalb des Fensters.
+    window_minutes <= 0 deaktiviert den Zeit-Cutoff.
+    """
+    try:
+        with SessionLocal() as s:
+            raw = get_setting(s, LAST_UPLOAD_ERROR_KEY, "")
+        if not raw:
+            return None
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return None
+        ts_iso = data.get("ts")
+        if not ts_iso:
+            return None
+        try:
+            ts = datetime.fromisoformat(ts_iso)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            return None
+        age_seconds = int((datetime.now(timezone.utc) - ts).total_seconds())
+        if window_minutes > 0 and age_seconds > window_minutes * 60:
+            return None
+        data["age_seconds"] = age_seconds
+        return data
+    except Exception as e:  # noqa: BLE001
+        log.debug("recent_upload_error: %s", e)
+        return None
+
+
 # ----- Cookie-Health ---------------------------------------------------------
 
 def cookie_health() -> list[CookieInfo]:
@@ -355,6 +441,13 @@ def health_summary() -> dict:
     Detection-Cookies wie ak_bmsc/bm_sv leben kurz und werden bei jedem Request
     automatisch neu gesetzt — die sollen das Banner nicht ungerechtfertigt
     triggern.
+
+    v0.12.1: Zusaetzlich `last_upload_error`. Wenn der uploader in den letzten
+    30 Min einen 401/403 von Amazon bekommen hat, wird overall hart auf
+    'critical' gesetzt — das ist Ground-Truth (echte Server-Antwort) und schlaegt
+    jede TTL-Heuristik. Loest das v0.12.0-Banner-Luge-Problem: bei abgelaufenem
+    at-acbde (Status 'unknown' weil nie rolliert) blieb der Banner faelschlich
+    auf gruen, obwohl Uploads schon 401 zogen.
     """
     cookies = cookie_health()
     ts, st = last_heartbeat()
@@ -364,8 +457,14 @@ def health_summary() -> dict:
     expired_required = [c for c in expired_all if c.required]
     warn_required = [c for c in warn_all if c.required]
     missing_required = [n for n in LONG_LIVED_REQUIRED if not any(c.name == n for c in cookies)]
+
+    # v0.12.1: Ground-Truth-Signal aus dem uploader
+    upload_err = recent_upload_error()
+
     overall = "ok"
-    if expired_required or missing_required:
+    if upload_err and upload_err.get("status_code") in (401, 403):
+        overall = "critical"
+    elif expired_required or missing_required:
         overall = "critical"
     elif warn_required:
         overall = "warn"
@@ -381,4 +480,6 @@ def health_summary() -> dict:
         "expired": [c.name for c in expired_all],
         "warn": [c.name for c in warn_all],
         "missing_required": missing_required,
+        # v0.12.1: Letzter belastbarer Upload-Fehler (oder None)
+        "last_upload_error": upload_err,
     }

@@ -400,7 +400,16 @@
     </header>
 
     <div id="ch-status" class="ch-status status-{{ cookie_health.overall }}">
-      {% if cookie_health.overall == 'ok' %}
+      {% if cookie_health.last_upload_error %}
+        {% set lue = cookie_health.last_upload_error %}
+        <strong>Manueller Re-Login noetig:</strong>
+        Letzter Upload-Versuch endete mit
+        <code>{{ lue.status_code }}</code>
+        vor {% if lue.age_seconds < 60 %}{{ lue.age_seconds }} Sek.
+        {% else %}{{ lue.age_seconds // 60 }} Min.{% endif %}
+        — vermutlich ist <code>at-acbde</code> abgelaufen, bitte frische Cookies eintragen.
+        {% if lue.message %}<br><small class="muted">{{ lue.message }}</small>{% endif %}
+      {% elif cookie_health.overall == 'ok' %}
         <strong>Alle Pflicht-Cookies sind frisch.</strong>
       {% elif cookie_health.overall == 'warn' %}
         <strong>Achtung:</strong> ein oder mehrere Cookies laufen demnaechst ab.

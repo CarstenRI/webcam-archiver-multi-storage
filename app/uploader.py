@@ -40,18 +40,34 @@ def _is_in_skip_mode() -> tuple[bool, str]:
     return False, ""
 
 
-def _mark_cookies_expired(msg: str = "Cookies abgelaufen") -> None:
+def _mark_cookies_expired(msg: str = "Cookies abgelaufen", *, status_code: int = 401) -> None:
     import time
     global _cookies_expired_until, _cookies_expired_msg
     _cookies_expired_until = time.time() + SKIP_DURATION_SECONDS
     _cookies_expired_msg = msg
     log.warning("Amazon-Cookies abgelaufen – Skip-Mode fuer %d Min aktiv", SKIP_DURATION_SECONDS // 60)
+    # v0.12.1: Persistenter Status fuer das Cookie-Health-Banner (Ground Truth).
+    # Loest das v0.12.0-Banner-Luege-Problem: bisher konnte das Banner gruen
+    # zeigen, obwohl Amazon faktisch 401 zurueckgab (weil at-acbde-TTL unbekannt).
+    try:
+        from . import amazon_session as _as
+        _as.record_upload_error(status_code, msg)
+    except Exception as e:  # noqa: BLE001
+        log.debug("record_upload_error from _mark_cookies_expired: %s", e)
 
 
 def _clear_skip_mode() -> None:
     global _cookies_expired_until, _cookies_expired_msg
     _cookies_expired_until = None
     _cookies_expired_msg = ""
+    # v0.12.1: Persistenten Banner-Trigger ebenfalls clearen, damit das Banner
+    # nach einem manuellen Cookie-Refresh sofort gruen wird (statt erst nach
+    # Ablauf des 30-Min-Fensters).
+    try:
+        from . import amazon_session as _as
+        _as.clear_upload_error()
+    except Exception as e:  # noqa: BLE001
+        log.debug("clear_upload_error from _clear_skip_mode: %s", e)
 
 
 
